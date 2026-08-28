@@ -95,6 +95,65 @@ export function buildProceduralBandDef(index, totalBands) {
   };
 }
 
+/** Log-spaced full-spectrum sine nodes — uniform binaural/pitch for MAX_BANDS pads. */
+export function buildFullSpectrumBandDef(index, totalBands = CFG.MAX_BANDS) {
+  const n = Math.max(1, totalBands);
+  const t = index / Math.max(1, n - 1);
+  const carrier = Math.round(Math.min(16000, Math.max(32, 32 * (2 ** (t * Math.log2(16000 / 32))))));
+  const { color, rgb } = bandThemeForIndex(index);
+  const vol = Math.max(0.07, 0.21 - t * 0.12);
+  const pLow = Math.max(0.4, 0.55 + t * 12);
+  const pHigh = Math.max(pLow + 0.6, pLow * (2 + t * 2.6));
+  const pan = -0.92 + t * 1.84;
+
+  return {
+    name: `Node ${index + 1}`,
+    color,
+    rgb,
+    carrier,
+    mult: Math.max(0.0625, Math.pow(2, t * 4 - 1)),
+    micSync: false,
+    pLow,
+    pHigh,
+    dur: Math.round(10 + t * 22),
+    bpmSync: true,
+    shape: 'sine',
+    vol,
+    sharp: 2,
+    cType: 'sine',
+    filterType: 'lowpass',
+    filterFreq: Math.round(Math.min(18000, carrier * 1.15 + 80)),
+    filterQ: 1.2,
+    filterLFORate: 0.35 + t * 2.5,
+    filterLFODepth: 0,
+    pan,
+    dlySend: 0.08 + t * 0.14,
+    revSend: 0.14 + t * 0.18,
+    mode: 'cont',
+    hits: 4,
+    rotate: index % STEPS,
+    a: 0.004,
+    d: 0.22,
+    s: 0,
+    r: 0.12,
+    source: 'osc',
+    pitch: 1,
+    drive: 0,
+    driveType: 'tanh',
+    lfoTarget: 'filter',
+    binauralOffset: 1,
+    fmRatio: 2,
+    fmIndex: 20,
+    pluckDecay: 0.05,
+  };
+}
+
+/** All `count` bands as evenly log-spaced sine binaural nodes (default 48). */
+export function getFullSpectrumBandDefs(count = CFG.MAX_BANDS) {
+  const n = Math.min(CFG.MAX_BANDS, Math.max(1, count));
+  return Array.from({ length: n }, (_, i) => buildFullSpectrumBandDef(i, n));
+}
+
 /** Return `count` band definitions: named Delta–Omega then procedural fill. */
 export function getBandDefs(count = CFG.DEFAULT_BANDS) {
   const n = Math.min(CFG.MAX_BANDS, Math.max(1, count));

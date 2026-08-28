@@ -33,6 +33,10 @@ export const CFG = Object.freeze({
   LOG_RENDER_MS: 500,
   LOG_VISIBLE_ROWS: 100,
   WAVEFORM_DRAW_INTERVAL: 2,
+  /** Min progress delta before arc morph re-applies audio params. */
+  ARC_MORPH_STEP: 0.012,
+  /** Redraw band mini-LFO canvas every N animation frames when playing. */
+  LFO_MINI_FRAME_INTERVAL: 4,
   /** Pulse Low/High are Hz at this reference tempo when SYNC is on. */
   REF_BPM: 60,
   TEMPO_MIN: 1,
