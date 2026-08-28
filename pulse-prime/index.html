@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="PulseForge — generative multi-band spatial rhythm synthesizer." />
+    <title>PulseForge — Rhythm Synthesizer &amp; Activity Logger</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div>
+          <h1 class="brand-title">PULSEFORGE</h1>
+          <p class="brand-sub">Multi-band rhythm generator · Real-time activity logging</p>
+        </div>
+        <div class="header-controls">
+          <div class="chip-row">
+            <button id="theme-btn" class="chip-btn" aria-pressed="false" title="Toggle light / dark mode">Light</button>
+            <button id="mode-btn" class="chip-btn" aria-pressed="false" title="Audio latency profile">Live</button>
+            <button id="wake-btn" class="chip-btn" aria-pressed="false" title="Keep screen awake">Wake</button>
+          </div>
+          <div class="vol-row">
+            <label class="ctrl-label" for="master-vol">Vol</label>
+            <input class="num-input" type="number" id="master-vol" min="0" max="1" step="0.01" value="0.5" aria-label="Master volume" />
+            <span id="master-vol-val" class="ctrl-val">50%</span>
+          </div>
+          <button id="play-btn" class="play-btn" aria-label="Start or stop all bands"></button>
+        </div>
+      </header>
+
+      <div class="sys-strip" aria-live="polite">
+        <span class="sys-item"><i class="sys-led" id="led-state"></i><b id="sys-state">IDLE</b>&nbsp;<span id="sys-rate">—</span></span>
+        <span class="sys-item"><i class="sys-led" id="led-engine"></i>ENGINE&nbsp;<b id="sys-engine">—</b></span>
+        <span class="sys-item"><i class="sys-led" id="led-timer"></i>TIMER&nbsp;<b id="sys-timer">—</b></span>
+        <span class="sys-item"><i class="sys-led" id="led-wake"></i>WAKE&nbsp;<b id="sys-wake">OFF</b></span>
+        <span class="sys-item sys-logger">Logger: real-time parameter tracking &amp; CSV export</span>
+      </div>
+
+      <section class="session-panel" aria-label="Session tools">
+        <div class="session-row primary">
+          <div class="session-group">
+            <span class="session-label">Presets</span>
+            <input id="preset-name" class="session-input" style="width: 90px" placeholder="name…" aria-label="Preset name" />
+            <button id="preset-save" class="sm-btn" title="Save to browser">SAVE</button>
+            <select id="preset-list" class="session-input" aria-label="Saved presets"><option value="">—</option></select>
+            <button id="preset-load" class="sm-btn">LOAD</button>
+            <button id="preset-del" class="sm-btn" title="Delete selected">DEL</button>
+            <button id="preset-export" class="sm-btn" title="Download current state as JSON">⇩ JSON</button>
+            <button id="preset-import" class="sm-btn" title="Import single JSON state">⇧ JSON</button>
+            <button id="pack-export" class="sm-btn pack" title="Export all built-in presets as a pack">⇩ PACK</button>
+            <button id="pack-import" class="sm-btn pack" title="Import a preset pack file">⇧ PACK</button>
+            <input type="file" id="preset-file" accept=".json,application/json" class="sr-only" />
+            <input type="file" id="pack-file" accept=".json,application/json" class="sr-only" />
+          </div>
+          <div class="session-group">
+            <span class="session-label">Generate</span>
+            <select id="preset-gen-select" class="session-input" aria-label="Generate preset">
+              <option value="">— Select —</option>
+              <option value="meditation">Meditation (432Hz)</option>
+              <option value="cyberpunk">Cyberpunk (140BPM)</option>
+              <option value="harp">Pluck Ensemble</option>
+              <option value="drone">Cosmic Drone</option>
+              <option value="fm-binaural">Crisp FM Binaural</option>
+              <option value="tectonic">Sub-Harmonic Tectonic</option>
+              <option value="gamma-ascension">Neural Gamma Ascension</option>
+              <option value="glitch-matrix">Glitch Matrix</option>
+              <option value="chaos-cascade">Chaos Cascade (500→1)</option>
+              <option value="tectonic-breath">Tectonic Breath</option>
+              <option value="arc-stream">Arc Stream Auto</option>
+              <option value="arc-orchestra">36-Band Arc Orchestra</option>
+              <option value="random">Random Forge</option>
+            </select>
+            <button id="btn-gen-preset" class="sm-btn ok">GENERATE</button>
+          </div>
+          <div class="session-group">
+            <span class="session-label">Dynamic Engine</span>
+            <button id="btn-conductor" class="chip-btn" aria-pressed="false" title="Algorithmic live conductor">CONDUCTOR</button>
+            <span id="conductor-status" class="session-status">idle</span>
+          </div>
+        </div>
+        <div class="session-row tools">
+          <div class="session-group">
+            <span class="session-label">MIDI</span>
+            <button id="midi-enable" class="sm-btn" aria-pressed="false">ENABLE</button>
+            <button id="midi-learn" class="sm-btn" aria-pressed="false">LEARN</button>
+            <span id="midi-status" class="session-status">off</span>
+          </div>
+          <div class="session-group">
+            <span class="session-label">Mic Sync</span>
+            <button id="mic-enable" class="sm-btn" aria-pressed="false">ENABLE MIC</button>
+            <button id="mic-beat-track" class="sm-btn" aria-pressed="false">BEAT TRACK</button>
+            <button id="mic-sync-all" class="sm-btn" aria-pressed="false">SYNC BANDS</button>
+            <span id="mic-status" class="session-status">mic off</span>
+          </div>
+          <div class="session-group">
+            <span class="session-label">Export</span>
+            <select id="export-dur" class="session-input" aria-label="Render duration">
+              <option value="5">5 s</option>
+              <option value="10" selected>10 s</option>
+              <option value="30">30 s</option>
+              <option value="60">60 s</option>
+            </select>
+            <button id="export-wav" class="sm-btn" title="Render to WAV">RENDER WAV</button>
+            <span id="export-status" class="session-status">idle</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="viz-stack" aria-label="Visualizers">
+        <div class="viz-frame">
+          <canvas id="viz-canvas" role="img" aria-label="Radial rhythm visualizer"></canvas>
+        </div>
+        <div class="viz-frame">
+          <canvas id="wave-canvas" role="img" aria-label="Master output oscilloscope"></canvas>
+        </div>
+      </section>
+
+      <section class="panel panel-pad log-panel" aria-label="Activity log">
+        <div class="log-head">
+          <div class="log-title-row">
+            <span class="section-title">Activity &amp; Modulation Log</span>
+            <span id="log-count-badge" class="log-badge">0 events</span>
+          </div>
+          <div class="log-actions">
+            <label>
+              <input type="checkbox" id="log-autoscroll" checked />
+              Auto-Scroll
+            </label>
+            <button id="btn-export-csv" class="sm-btn ok">⇩ CSV</button>
+            <button id="btn-clear-log" class="sm-btn danger">CLEAR</button>
+          </div>
+        </div>
+        <div id="log-table-container">
+          <table id="log-table">
+            <thead>
+              <tr>
+                <th style="width: 5rem">Time</th>
+                <th style="width: 7rem">Source</th>
+                <th style="width: 8rem">Target</th>
+                <th style="width: 9rem">Parameter</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody id="log-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-label="Transport">
+        <div class="section-head">
+          <h2 class="section-title">Transport</h2>
+          <span class="section-meta">Global clock · SYNC bands scale pulse Hz from values @ 60 BPM</span>
+        </div>
+        <div class="transport-panel">
+          <div class="transport-top">
+            <div class="transport-field">
+              <span class="ctrl-label">Tempo</span>
+              <input class="num-input" type="number" id="tr-tempo" min="1" max="500" step="1" value="90" aria-label="Global tempo" />
+              <span class="ctrl-val" id="tr-tempo-val">90 BPM</span>
+            </div>
+            <div class="transport-field">
+              <span class="ctrl-label">Swing</span>
+              <input class="num-input" type="number" id="tr-swing" min="0" max="100" step="1" value="0" aria-label="Global swing" />
+              <span class="ctrl-val" id="tr-swing-val">0%</span>
+            </div>
+            <div id="tr-grid" aria-hidden="true"></div>
+          </div>
+
+          <div class="transport-block">
+            <div class="control-cluster arc-stream-cluster">
+              <button id="arc-stream-toggle" class="chip-btn ok" aria-pressed="false" title="Auto-generate planned tempo arcs with silence gaps">Arc Stream</button>
+              <div id="ramp-arc-fields" class="arc-fields" hidden>
+                <div class="transport-field">
+                  <span class="ctrl-label">Gap Profile</span>
+                  <select id="arc-gap-profile" aria-label="Silence gap length profile">
+                    <option value="mixed" selected>Mixed (short/med/long)</option>
+                    <option value="short">Short gaps</option>
+                    <option value="medium">Medium gaps</option>
+                    <option value="long">Long gaps</option>
+                  </select>
+                </div>
+                <div class="transport-field">
+                  <span class="ctrl-label">Intensity</span>
+                  <select id="arc-intensity" aria-label="Arc contrast intensity">
+                    <option value="subtle">Subtle</option>
+                    <option value="dramatic" selected>Dramatic</option>
+                    <option value="extreme">Extreme</option>
+                  </select>
+                </div>
+                <div class="transport-field">
+                  <span class="ctrl-label">Orchestration</span>
+                  <button id="arc-orchestration-toggle" class="chip-btn on" aria-pressed="true" title="Enable/disable spectral band groups per arc">On</button>
+                </div>
+                <div class="transport-field">
+                  <span class="ctrl-label">Morph</span>
+                  <button id="arc-morph-toggle" class="chip-btn on" aria-pressed="true" title="Morph palette + FX along arc curve">On</button>
+                </div>
+                <button id="arc-regen" class="sm-btn" title="Generate a fresh arc program">↻ NEW PROGRAM</button>
+              </div>
+              <div id="arc-queue-preview" class="arc-queue-preview" hidden>
+                <span class="ctrl-label">Queue</span>
+                <ol id="arc-queue-list" class="arc-queue-list"></ol>
+              </div>
+              <span id="arc-status-text" class="session-status">idle</span>
+            </div>
+          </div>
+
+          <div class="transport-block">
+            <div id="ramp-manual-fields" class="control-cluster">
+              <button id="ramp-toggle" class="chip-btn" aria-pressed="false">BPM Ramp</button>
+              <div class="transport-field">
+                <span class="ctrl-label">Start</span>
+                <input class="num-input" type="number" id="ramp-start" min="1" max="500" step="1" value="180" />
+                <span class="ctrl-val" id="ramp-start-val">180 BPM</span>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">End</span>
+                <input class="num-input" type="number" id="ramp-end" min="1" max="500" step="1" value="60" />
+                <span class="ctrl-val" id="ramp-end-val">60 BPM</span>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">Time</span>
+                <input class="num-input" type="number" id="ramp-time" min="1" max="120" step="1" value="10" />
+                <span class="ctrl-val" id="ramp-time-val">10s</span>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">Mode</span>
+                <select id="ramp-mode">
+                  <option value="micro-loops" selected>Dynamic Micro-Loops</option>
+                  <option value="arc-stream">Arc Stream (Auto)</option>
+                  <option value="pulse-wave">Pulse Wave + Silence</option>
+                  <option value="pingpong">Ping-Pong</option>
+                  <option value="sawtooth">Sawtooth</option>
+                  <option value="dynamic">Dynamic Trend</option>
+                  <option value="stochastic">Stochastic Drift</option>
+                </select>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">Sub-Loop</span>
+                <select id="ramp-sublen" title="Dynamic sub-loop duration range">
+                  <option value="random" selected>Random (1-8s)</option>
+                  <option value="short">Short (1-3s)</option>
+                  <option value="medium">Medium (3-7s)</option>
+                  <option value="long">Long (6-14s)</option>
+                  <option value="chaos">Chaos (0.5-2.5s)</option>
+                </select>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">Jitter</span>
+                <input class="num-input" type="number" id="ramp-jitter" min="0" max="100" step="5" value="40" />
+                <span class="ctrl-val" id="ramp-jitter-val">40%</span>
+              </div>
+              <div class="transport-field" title="Silence gap range for Pulse Wave mode">
+                <span class="ctrl-label">Gap Min</span>
+                <input class="num-input" type="number" id="ramp-silence-min" min="0.2" max="30" step="0.1" value="0.5" />
+                <span class="ctrl-val" id="ramp-silence-min-val">0.5s</span>
+              </div>
+              <div class="transport-field" title="Silence gap range for Pulse Wave mode">
+                <span class="ctrl-label">Gap Max</span>
+                <input class="num-input" type="number" id="ramp-silence-max" min="0.5" max="60" step="0.1" value="3" />
+                <span class="ctrl-val" id="ramp-silence-max-val">3s</span>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">Loop</span>
+                <button id="ramp-loop" class="toggle mini-toggle on" role="switch" aria-checked="true"></button>
+              </div>
+              <div class="ramp-progress">
+                <div class="ramp-bar"><div id="ramp-progress-bar"></div></div>
+                <span id="ramp-status-text" class="session-status">OFF</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="transport-block">
+            <div class="control-cluster">
+              <button id="var-toggle" class="chip-btn" aria-pressed="true">Var Engine</button>
+              <div class="transport-field">
+                <span class="ctrl-label">Interval</span>
+                <select id="var-interval">
+                  <option value="1">1 Loop</option>
+                  <option value="2" selected>2 Loops</option>
+                  <option value="4">4 Loops</option>
+                  <option value="8">8 Loops</option>
+                </select>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">Params</span>
+                <select id="var-count">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label" style="color: var(--ok)">Slowdown</span>
+                <select id="ramp-exaggerate">
+                  <option value="off">OFF</option>
+                  <option value="thin" selected>Thin</option>
+                  <option value="sparse">Sparse</option>
+                  <option value="vinyl">Vinyl</option>
+                  <option value="bands">Band Zone</option>
+                  <option value="combo">Combo</option>
+                </select>
+              </div>
+              <div class="transport-field">
+                <span class="ctrl-label">Depth</span>
+                <input class="num-input" type="number" id="ramp-depth" min="0" max="100" step="5" value="80" />
+                <span class="ctrl-val" id="ramp-depth-val">80%</span>
+              </div>
+              <span id="var-status-text" class="session-status">Var: Loop #0</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-label="FX rack">
+        <div class="section-head">
+          <h2 class="section-title">FX Rack</h2>
+          <span class="section-meta">Global send / return</span>
+        </div>
+        <div class="fx-grid">
+          <div class="fx-module" style="--fx: #059669">
+            <div class="fx-head">
+              <i class="fx-led" id="fx-led-dly"></i>
+              <span class="fx-title" style="color: #059669">Delay</span>
+              <span class="section-meta">Ping-Pong</span>
+              <span class="ctrl-val" style="margin-left: auto" id="fx-delay-ms">— ms</span>
+            </div>
+            <div class="fx-controls">
+              <div class="fx-row">
+                <span class="ctrl-label">Time</span>
+                <select id="fx-subdiv">
+                  <option value="1">1/1</option>
+                  <option value="0.5">1/2</option>
+                  <option value="0.25">1/4</option>
+                  <option value="0.375" selected>1/4.</option>
+                  <option value="0.125">1/8</option>
+                  <option value="0.1875">1/8.</option>
+                  <option value="0.0625">1/16</option>
+                  <option value="0.16666666666666666">1/4T</option>
+                </select>
+              </div>
+              <div class="fx-row">
+                <span class="ctrl-label">Fdbk</span>
+                <input class="num-input" type="number" id="fx-feedback" min="0" max="90" step="1" value="45" />
+                <span class="ctrl-val" id="fx-feedback-val">45%</span>
+              </div>
+              <div class="fx-row">
+                <span class="ctrl-label">Damp</span>
+                <input class="num-input" type="number" id="fx-damp" min="200" max="12000" step="50" value="3200" />
+                <span class="ctrl-val" id="fx-damp-val">3.2k</span>
+              </div>
+              <div class="fx-row">
+                <span class="ctrl-label">Return</span>
+                <input class="num-input" type="number" id="fx-dly-ret" min="0" max="100" step="1" value="50" />
+                <span class="ctrl-val" id="fx-dly-ret-val">50%</span>
+              </div>
+            </div>
+          </div>
+          <div class="fx-module" style="--fx: #7c3aed">
+            <div class="fx-head">
+              <i class="fx-led" id="fx-led-rev"></i>
+              <span class="fx-title" style="color: #7c3aed">Reverb</span>
+              <span class="section-meta">Convolution IR</span>
+              <span class="ctrl-val" style="margin-left: auto" id="fx-rev-tail">2.8 s</span>
+            </div>
+            <div class="fx-controls">
+              <div class="fx-row">
+                <span class="ctrl-label">Space</span>
+                <select id="fx-rev-preset">
+                  <option value="room">Room 1.1s</option>
+                  <option value="hall" selected>Hall 2.8s</option>
+                  <option value="cave">Cave 4.6s</option>
+                  <option value="plate">Plate 1.7s</option>
+                </select>
+              </div>
+              <div class="fx-row">
+                <span class="ctrl-label">Return</span>
+                <input class="num-input" type="number" id="fx-rev-ret" min="0" max="100" step="1" value="45" />
+                <span class="ctrl-val" id="fx-rev-ret-val">45%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-label="Frequency bands">
+        <div class="section-head">
+          <h2 class="section-title">Frequency Bands</h2>
+          <span id="band-count-meta" class="section-meta">9 / 48 bands</span>
+          <div class="section-actions">
+            <span class="ctrl-label band-view-label">View</span>
+            <button id="band-view-full" class="chip-btn on" aria-pressed="true" title="Full band cards">Full</button>
+            <button id="band-view-groups" class="chip-btn" aria-pressed="false" title="Collapsible spectral groups">Groups</button>
+            <button id="band-view-compact" class="chip-btn" aria-pressed="false" title="Compact cards for 24+ bands">Compact</button>
+            <button id="btn-expand-36" class="sm-btn" title="Add procedural bands 10–36 for Arc Stream">Expand to 36</button>
+            <button id="btn-add-band" class="sm-btn ok">+ ADD BAND</button>
+            <button id="btn-sync-all" class="sm-btn">Sync All</button>
+            <button id="btn-enable-all" class="sm-btn">Enable All</button>
+            <button id="btn-disable-all" class="sm-btn">Disable All</button>
+          </div>
+        </div>
+        <div id="bands-grid" class="bands-grid"></div>
+      </section>
+
+      <footer class="app-footer">
+        <p>PulseForge · Web Audio API · No data leaves your browser.</p>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
