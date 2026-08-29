@@ -214,6 +214,39 @@ body::before {
   font-weight: 700;
 }
 
+/* —— Master panel (Sprint 4) —— */
+.master-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem 0.85rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.master-panel-head {
+  margin-bottom: 0;
+}
+
+.master-panel-body {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.master-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.master-select {
+  min-width: min(100%, 14rem);
+  max-width: 22rem;
+  flex: 1 1 12rem;
+}
+
 /* —— Session toolbar (layout optimization) —— */
 .session-panel {
   background: var(--bg-card);
@@ -1050,24 +1083,32 @@ body.dark-mode .tr-cell.beat {
 .bands-grid.compact-view .band-card > .lfo-canvas,
 .bands-grid.compact-view .band-card > .band-row,
 .bands-grid.compact-view .band-card > .fm-box,
+.bands-grid.compact-view .band-card > .pluck-box,
 .bands-grid.compact-view .band-card > details {
   display: none;
 }
 
 .bands-grid.compact-view .band-card .band-head {
   margin-bottom: 0;
+  gap: 0.35rem;
 }
 
 .bands-grid.compact-view .band-card .band-name {
-  font-size: 0.72rem;
-  max-width: 5.5rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.875rem;
+  max-width: 6.5rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: -0.02em;
 }
 
 .bands-grid.compact-view .band-card .freq-display {
-  font-size: 0.62rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  max-width: 9rem;
+  line-height: 1.25;
 }
 
 .bands-grid.compact-view .band-card .sm-btn.danger {
@@ -1281,7 +1322,8 @@ body.dark-mode .tr-cell.beat {
   margin-top: 0.65rem;
 }
 
-.fm-box {
+.fm-box,
+.pluck-box {
   display: grid;
   gap: 0.35rem;
   margin-bottom: 0.5rem;
@@ -1292,6 +1334,7 @@ body.dark-mode .tr-cell.beat {
 }
 
 .fm-box.hidden,
+.pluck-box.hidden,
 .hidden {
   display: none !important;
 }

@@ -2,6 +2,7 @@
 export const TAU = Math.PI * 2;
 export const STEPS = 16;
 export const PRESET_KEY = 'pulseforge.presets.v1';
+export const AUDIO_SINK_KEY = 'pulseforge.audioSink.v1';
 
 export const CFG = Object.freeze({
   MAX_DPR: 2,
@@ -33,19 +34,35 @@ export const CFG = Object.freeze({
   LOG_RENDER_MS: 500,
   LOG_VISIBLE_ROWS: 100,
   WAVEFORM_DRAW_INTERVAL: 2,
+  /** Min progress delta before arc morph re-applies audio params. */
+  ARC_MORPH_STEP: 0.012,
+  /** Redraw band mini-LFO canvas every N animation frames when playing. */
+  LFO_MINI_FRAME_INTERVAL: 4,
   /** Pulse Low/High are Hz at this reference tempo when SYNC is on. */
   REF_BPM: 60,
   TEMPO_MIN: 1,
   TEMPO_MAX: 500,
   /** Max simultaneous frequency bands in a session. */
   MAX_BANDS: 48,
+  /** Full-spectrum carrier range (Hz) — log-spaced across bands. */
+  SPECTRUM_CARRIER_MIN: 55,
+  SPECTRUM_CARRIER_MAX: 20501,
   /** Target band count for Arc Stream orchestration. */
   ARC_STREAM_BANDS: 36,
+  /** Arc Stream density tiers (orchestration + palette patch counts). */
+  ARC_TIERS: Object.freeze([5, 24, 36, 48]),
+  /** Switch viz to orbital constellation above this band count. */
+  VIZ_DENSE_BANDS: 24,
+  VIZ_SPECTRUM_TIERS_36: 6,
+  VIZ_SPECTRUM_TIERS_48: 8,
   /** Bands loaded on fresh session (named brainwave set). */
   DEFAULT_BANDS: 9,
   WORKLET_PULSE_MIN: 0.001,
   WORKLET_PULSE_MAX: 2000,
+  WORKLET_DUR_MIN: 0.01,
   WORKLET_DUR_MAX: 600,
+  /** Filter LFO depth hard cap (Hz) — UI + engine. */
+  FILTER_LFO_DEPTH_MAX: 8000,
 });
 
 export const CURVE_DT = CFG.CURVE_WINDOW / CFG.CURVE_N;
