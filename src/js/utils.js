@@ -1,5 +1,38 @@
 import { CFG, TAU } from './config.js';
 
+export {
+  roundParam,
+  roundDecimals,
+  clampParam,
+  paramInputAttrs,
+  rhythmInputAttrs,
+  clampBandParams,
+  getParamSpec,
+  getEffectiveLimits,
+  storedToUi,
+  uiToStored,
+} from './param-registry.js';
+
+export const OSC_FREQ_MIN = 20;
+
+/** Upper bound for OscillatorNode.frequency (just below Nyquist). */
+export function nyquistHz(ctx = null) {
+  const sr = ctx?.sampleRate || 44100;
+  return Math.max(OSC_FREQ_MIN, sr * 0.5 - 1);
+}
+
+/** Clamp Hz into Web Audio oscillator nominal range. */
+export function clampOscFreq(hz, ctx = null) {
+  const max = nyquistHz(ctx);
+  const v = Number.isFinite(hz) ? hz : OSC_FREQ_MIN;
+  return Math.max(OSC_FREQ_MIN, Math.min(max, v));
+}
+
+/** FM modulator frequency — carrier × ratio, clamped to Nyquist. */
+export function fmModFrequency(carrier, ratio, ctx = null) {
+  return clampOscFreq(carrier * (ratio || 1), ctx);
+}
+
 export const $ = (id) => document.getElementById(id);
 
 export const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;

@@ -128,10 +128,20 @@ const SLOT_EMPHASIS = [
 
 function patchCountForIntensity(intensity, totalBands) {
   const n = Math.max(1, totalBands);
+  if (n >= 48) {
+    if (intensity === 'subtle') return 3;
+    if (intensity === 'extreme') return 8;
+    return 5;
+  }
   if (n >= 36) {
     if (intensity === 'subtle') return 2;
     if (intensity === 'extreme') return 6;
     return 4;
+  }
+  if (n >= 24) {
+    if (intensity === 'subtle') return 2;
+    if (intensity === 'extreme') return 5;
+    return 3;
   }
   if (n >= 18) {
     if (intensity === 'subtle') return 2;

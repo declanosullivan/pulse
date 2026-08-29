@@ -24,9 +24,11 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-/** Number of spectral tiles for a given band count. */
+/** Number of spectral tiles for a given band count (5, 24, 36, 48 tiers). */
 export function tileCount(totalBands) {
+  if (totalBands >= 48) return 8;
   if (totalBands >= 36) return 6;
+  if (totalBands >= 24) return 5;
   if (totalBands >= 18) return 4;
   if (totalBands >= 9) return 3;
   return Math.max(1, Math.min(3, totalBands));
@@ -76,9 +78,14 @@ function targetCount(density, intensity, totalBands) {
   if (intensity === 'subtle') ratio *= 0.82;
   const n = Math.max(1, totalBands);
   let count = Math.round(n * ratio);
-  if (density === 'sparse') count = Math.max(2, Math.min(4, count));
-  else if (density === 'full') count = Math.max(6, Math.min(16, count));
-  else count = Math.max(3, Math.min(10, count));
+  if (density === 'sparse') count = Math.max(2, Math.min(5, count));
+  else if (density === 'full') {
+    const cap = n >= 48 ? 22 : n >= 36 ? 18 : n >= 24 ? 14 : 16;
+    count = Math.max(6, Math.min(cap, count));
+  } else {
+    const cap = n >= 48 ? 14 : n >= 36 ? 12 : n >= 24 ? 10 : 10;
+    count = Math.max(3, Math.min(cap, count));
+  }
   return Math.min(n, count);
 }
 
