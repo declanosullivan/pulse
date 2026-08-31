@@ -1,0 +1,16 @@
+{
+  "name": "PulseForge",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "npm run dev"
+    }
+  ],
+  "ports": [
+    {
+      "name": "PulseForge dev server",
+      "port": 45321
+    }
+  ]
+}
