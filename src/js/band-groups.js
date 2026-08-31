@@ -2,8 +2,6 @@
  * Spectral band grouping for collapsible UI (Phase 3).
  */
 
-const SPECTRAL_LABELS = Object.freeze(['Infrasub', 'Low', 'Mid-Low', 'Mid-High', 'High', 'Hyper']);
-
 /** Collapsible groups for the bands panel. */
 export function getBandGroups(totalBands) {
   const n = Math.max(1, totalBands);
@@ -16,7 +14,7 @@ export function getBandGroups(totalBands) {
   if (namedCount > 0) {
     groups.push({
       id: 'named',
-      label: 'Named · Delta–Omega',
+      label: `Bands 01–${String(namedCount).padStart(2, '0')}`,
       indices: Array.from({ length: namedCount }, (_, i) => i),
       defaultOpen: true,
     });
@@ -34,7 +32,7 @@ export function getBandGroups(totalBands) {
       if (!indices.length) continue;
       groups.push({
         id: `spectral-${t}`,
-        label: SPECTRAL_LABELS[t] || `Spectral ${t + 1}`,
+        label: `${String(namedCount + start + 1).padStart(2, '0')}–${String(Math.min(n, namedCount + end)).padStart(2, '0')}`,
         indices,
         defaultOpen: t < 2,
       });

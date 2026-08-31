@@ -12,8 +12,8 @@
       href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <script type="module" crossorigin src="/assets/index-C95Kw1hY.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DtCDyQHK.css">
+    <script type="module" crossorigin src="/assets/index-B6o9_cvh.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-1uBglvxh.css">
   </head>
   <body>
     <div class="app-shell">
@@ -75,8 +75,10 @@
               <option value="glitch-matrix">Glitch Matrix</option>
               <option value="chaos-cascade">Chaos Cascade (500→1)</option>
               <option value="tectonic-breath">Tectonic Breath</option>
+              <option value="full-spectrum-48">48-Band Full Spectrum</option>
               <option value="arc-stream">Arc Stream Auto</option>
               <option value="arc-orchestra">36-Band Arc Orchestra</option>
+              <option value="arc-orchestra-48">48-Band Arc Orchestra</option>
               <option value="random">Random Forge</option>
             </select>
             <button id="btn-gen-preset" class="sm-btn ok">GENERATE</button>
@@ -391,6 +393,23 @@
                 <span class="ctrl-val" id="fx-rev-ret-val">45%</span>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="master-panel" aria-label="Master controls">
+        <div class="section-head master-panel-head">
+          <h2 class="section-title">Master</h2>
+          <span class="section-meta">Global band parameters</span>
+        </div>
+        <div class="master-panel-body">
+          <div class="master-row">
+            <span class="session-label">Audio</span>
+            <label class="ctrl-label" for="audio-output-select">Output</label>
+            <select id="audio-output-select" class="session-input master-select" aria-label="Audio output device" disabled>
+              <option value="">System Default</option>
+            </select>
+            <span id="audio-output-status" class="session-status">init on play</span>
           </div>
         </div>
       </section>

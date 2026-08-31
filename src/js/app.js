@@ -3,25 +3,37 @@
  * Refactored into ES modules with layout/perf improvements.
  */
 import {
-  CFG, TAU, STEPS, PRESET_KEY, SHAPE_NUM, REVERB_PRESETS, BAND_COLORS,
+  CFG, TAU, STEPS, PRESET_KEY, AUDIO_SINK_KEY, SHAPE_NUM, REVERB_PRESETS, BAND_COLORS,
   ICON_PLAY, ICON_STOP, ART_SVG, CURVE_DT,
 } from './config.js';
 import {
   $, REDUCED, euclidPattern, lfoValue, panLabel, truncName, hexToRgb,
   makeDriveCurve, applyFilterType, downloadBlob, flashBtn, makeNoiseBuffer,
+  clampOscFreq, fmModFrequency, nyquistHz,
+  paramInputAttrs, rhythmInputAttrs, clampBandParams, roundParam, uiToStored, storedToUi,
 } from './utils.js';
 import { WORKLET_SRC, TICKER_SRC } from './audio/worklet-src.js';
 import {
   logParamChange, clearLog, renderLogTable, maybeRenderLog, exportLogCsv,
 } from './log.js';
 import { BAND_DEFS } from './bands/defs.js';
-import { getBandDefs, bandDefsToState } from './bands/factory.js';
+import { getBandDefs, bandDefsToState, getFullSpectrumBandDefs, bandLabel } from './bands/factory.js';
 import { getBandGroups, defaultBandViewMode } from './band-groups.js';
 import {
   createArcStream, refillArcQueue, compactArcQueue, sampleArcBpm, sampleArcMorph,
 } from './arc-generator.js';
 import { ARC_PALETTE_KEYS, ARC_MORPH_KEYS } from './arc-palettes.js';
 import { ARC_FX_MORPH_KEYS, lerpFxSnapshot } from './arc-fx-snapshots.js';
+
+function bandInp(key, band, stored) {
+  const a = paramInputAttrs(key, band, stored);
+  return `min="${a.min}" max="${a.max}" step="${a.step}" value="${a.value}"`;
+}
+
+function rhythmInp(key, band, stored) {
+  const a = rhythmInputAttrs(key, band, stored);
+  return `min="${a.min}" max="${a.max}" step="${a.step}" value="${a.value}"`;
+}
 
 export function initPulseForge() {
 'use strict';
@@ -39,7 +51,7 @@ function getBandEffectiveParams(b, tempoOverride) {
   const tempo = Math.max(1, tempoOverride !== undefined ? tempoOverride : (fxState.tempo || 90));
   const pLow = Math.max(CFG.WORKLET_PULSE_MIN, b.pLow || 0.5);
   const pHigh = Math.max(CFG.WORKLET_PULSE_MIN, b.pHigh || 4);
-  const dur = Math.max(0.01, b.dur || 8);
+  const dur = Math.max(CFG.WORKLET_DUR_MIN, b.dur || 8);
   if (!b.bpmSync) {
     return {
       pLow: Math.min(CFG.WORKLET_PULSE_MAX, pLow),
@@ -109,10 +121,12 @@ let lastTransportStep = -1;
 const transportCells = [];
 let midiAccess=null, midiLearnActive=false, midiArmed=null, midiArmedEl=null;
 const midiMap = {};
+let selectedSinkId = '';
 const curvePool = [];
 const bands = BAND_DEFS.map((d, i) => {
+  const def = clampBandParams({ ...d, name: bandLabel(i, BAND_DEFS.length) });
   const b = {
-    ...d,
+    ...def,
     steps: euclidPattern(d.hits, STEPS, d.rotate),
     enabled:false, pulseVal:0, curFreq:d.pLow,
     srcNode:null, pulseGain:null, level:null, shaper:null, filter:null, panner:null,
@@ -268,31 +282,34 @@ function buildCards() {
   <button type="button" class="sm-btn" data-load>SMP</button>
 </div>
 <div class="fm-box ${band.source==='fm'?'':'hidden'}" data-fmbody>
-  <div class="band-row"><span class="ctrl-label">FM Ratio</span><input class="num-input" type="number" min="0.25" max="8" step="0.25" value="${band.fmRatio||2}" data-ctl="fmRatio"><span class="ctrl-val" data-val="fmRatio">${(band.fmRatio||2).toFixed(2)}x</span></div>
-  <div class="band-row"><span class="ctrl-label">FM Index</span><input class="num-input" type="number" min="0" max="100" step="1" value="${band.fmIndex||20}" data-ctl="fmIndex"><span class="ctrl-val" data-val="fmIndex">${band.fmIndex||20}</span></div>
+  <div class="band-row"><span class="ctrl-label">FM Ratio</span><input class="num-input" type="number" ${bandInp('fmRatio', band, band.fmRatio||2)} data-ctl="fmRatio"><span class="ctrl-val" data-val="fmRatio">${(band.fmRatio||2).toFixed(2)}x</span></div>
+  <div class="band-row"><span class="ctrl-label">FM Index</span><input class="num-input" type="number" ${bandInp('fmIndex', band, band.fmIndex||20)} data-ctl="fmIndex"><span class="ctrl-val" data-val="fmIndex">${band.fmIndex||20}</span></div>
 </div>
-<div class="band-row"><span class="ctrl-label">Carrier</span><input class="num-input" type="number" min="20" max="22000" step="1" value="${band.carrier}" data-ctl="carrier"><button type="button" class="chip-btn" data-ctl="micSync" aria-pressed="${band.micSync}">MIC</button><select data-ctl="cType"><option value="sine" ${band.cType==='sine'?'selected':''}>Sine</option><option value="triangle" ${band.cType==='triangle'?'selected':''}>Tri</option><option value="sawtooth" ${band.cType==='sawtooth'?'selected':''}>Saw</option><option value="square" ${band.cType==='square'?'selected':''}>Sq</option></select></div>
+<div class="pluck-box ${band.source==='pluck'?'':'hidden'}" data-pluckbody>
+  <div class="band-row"><span class="ctrl-label">Decay</span><input class="num-input" type="number" ${bandInp('pluckDecay', band, band.pluckDecay||0.05)} data-ctl="pluckDecay"><span class="ctrl-val" data-val="pluckDecay">${(band.pluckDecay||0.05).toFixed(2)}</span></div>
+</div>
+<div class="band-row"><span class="ctrl-label">Carrier</span><input class="num-input" type="number" ${bandInp('carrier', band, band.carrier)} data-ctl="carrier"><button type="button" class="chip-btn" data-ctl="micSync" aria-pressed="${band.micSync}">MIC</button><select data-ctl="cType"><option value="sine" ${band.cType==='sine'?'selected':''}>Sine</option><option value="triangle" ${band.cType==='triangle'?'selected':''}>Tri</option><option value="sawtooth" ${band.cType==='sawtooth'?'selected':''}>Saw</option><option value="square" ${band.cType==='square'?'selected':''}>Sq</option></select></div>
 <div class="band-row" style="justify-content:flex-end"><span class="ctrl-val" data-val="carrier">${band.carrier>=1000?(band.carrier/1000).toFixed(2)+' kHz':band.carrier+' Hz'}</span></div>
-<div class="band-row"><span class="ctrl-label">Binaural</span><input class="num-input" type="number" min="-40" max="40" step="0.5" value="${band.binauralOffset||0}" data-ctl="binauralOffset"><span class="ctrl-val" data-val="binauralOffset">${(band.binauralOffset||0)>0?'+':''}${(band.binauralOffset||0).toFixed(1)}Hz</span></div>
-<div class="band-row"><span class="ctrl-label">Pitch</span><input class="num-input" type="number" min="-12" max="12" step="1" value="${band.pitch}" data-ctl="pitch"><span class="ctrl-val" data-val="pitch">${band.pitch>0?'+':''}${band.pitch}st</span></div>
-<div class="band-row"><span class="ctrl-label" title="Pulse rate low. With SYNC: Hz at 60 BPM">Low</span><input class="num-input" type="number" min="0.01" max="2000" step="0.1" value="${band.pLow}" data-ctl="pLow"><span class="ctrl-val" data-val="pLow">${band.pLow.toFixed(1)}</span></div>
-<div class="band-row"><span class="ctrl-label" title="Pulse rate high. With SYNC: Hz at 60 BPM">High</span><input class="num-input" type="number" min="0.01" max="2000" step="0.1" value="${band.pHigh}" data-ctl="pHigh"><span class="ctrl-val" data-val="pHigh">${band.pHigh.toFixed(1)}</span></div>
-<div class="band-row"><span class="ctrl-label" title="LFO duration. With SYNC: length in beats">Dur</span><input class="num-input" type="number" min="0.1" max="600" step="0.5" value="${band.dur}" data-ctl="dur"><button type="button" class="chip-btn" data-ctl="bpmSync" aria-pressed="${band.bpmSync}" title="Scale pulse rates with global tempo (values are Hz @ 60 BPM)">SYNC</button><span class="ctrl-val" data-val="dur">${band.dur.toFixed(1)}</span></div>
+<div class="band-row"><span class="ctrl-label">Binaural</span><input class="num-input" type="number" ${bandInp('binauralOffset', band, band.binauralOffset||0)} data-ctl="binauralOffset"><span class="ctrl-val" data-val="binauralOffset">${(band.binauralOffset||0)>0?'+':''}${(band.binauralOffset||0).toFixed(1)}Hz</span></div>
+<div class="band-row"><span class="ctrl-label">Pitch</span><input class="num-input" type="number" ${bandInp('pitch', band, band.pitch)} data-ctl="pitch"><span class="ctrl-val" data-val="pitch">${band.pitch>0?'+':''}${band.pitch}st</span></div>
+<div class="band-row"><span class="ctrl-label" title="Pulse rate low. With SYNC: Hz at 60 BPM">Low</span><input class="num-input" type="number" ${bandInp('pLow', band, band.pLow)} data-ctl="pLow"><span class="ctrl-val" data-val="pLow">${band.pLow.toFixed(2)}</span></div>
+<div class="band-row"><span class="ctrl-label" title="Pulse rate high. With SYNC: Hz at 60 BPM">High</span><input class="num-input" type="number" ${bandInp('pHigh', band, band.pHigh)} data-ctl="pHigh"><span class="ctrl-val" data-val="pHigh">${band.pHigh.toFixed(2)}</span></div>
+<div class="band-row"><span class="ctrl-label" title="LFO duration. With SYNC: length in beats">Dur</span><input class="num-input" type="number" ${bandInp('dur', band, band.dur)} data-ctl="dur"><button type="button" class="chip-btn" data-ctl="bpmSync" aria-pressed="${band.bpmSync}" title="Scale pulse rates with global tempo (values are Hz @ 60 BPM)">SYNC</button><span class="ctrl-val" data-val="dur">${band.dur.toFixed(2)}</span></div>
 <div class="band-row"><span class="ctrl-label">L.Target</span><select data-ctl="lfoTarget"><option value="filter" ${band.lfoTarget==='filter'?'selected':''}>Filter</option><option value="pitch" ${band.lfoTarget==='pitch'?'selected':''}>Pitch</option><option value="volume" ${band.lfoTarget==='volume'?'selected':''}>Volume</option><option value="pan" ${band.lfoTarget==='pan'?'selected':''}>Pan</option><option value="fm" ${band.lfoTarget==='fm'?'selected':''}>FM</option></select></div>
 <div class="band-row"><span class="ctrl-label">Shape</span><select data-ctl="shape"><option value="ramp" ${band.shape==='ramp'?'selected':''}>Ramp</option><option value="triangle" ${band.shape==='triangle'?'selected':''}>Tri</option><option value="sine" ${band.shape==='sine'?'selected':''}>Sine</option></select></div>
-<div class="band-row"><span class="ctrl-label">Vol</span><input class="num-input" type="number" min="0" max="1" step="0.01" value="${band.vol}" data-ctl="vol"><span class="ctrl-val" data-val="vol">${Math.round(band.vol*100)}%</span></div>
-<div class="band-row"><span class="ctrl-label">Sharp</span><input class="num-input" type="number" min="1" max="8" step="0.5" value="${band.sharp}" data-ctl="sharp"><span class="ctrl-val" data-val="sharp">${band.sharp.toFixed(1)}</span></div>
-<div class="band-row"><span class="ctrl-label">Drive</span><select data-ctl="driveType" style="flex:0 0 4rem"><option value="tanh" ${band.driveType==='tanh'?'selected':''}>Soft</option><option value="tube" ${band.driveType==='tube'?'selected':''}>Tube</option><option value="fold" ${band.driveType==='fold'?'selected':''}>Fold</option><option value="crush" ${band.driveType==='crush'?'selected':''}>Crush</option></select><input class="num-input" type="number" min="0" max="100" step="1" value="${Math.round(band.drive*100)}" data-ctl="drive"><span class="ctrl-val" data-val="drive">${Math.round(band.drive*100)}%</span></div>
+<div class="band-row"><span class="ctrl-label">Vol</span><input class="num-input" type="number" ${bandInp('vol', band, band.vol)} data-ctl="vol"><span class="ctrl-val" data-val="vol">${Math.round(band.vol*100)}%</span></div>
+<div class="band-row"><span class="ctrl-label">Sharp</span><input class="num-input" type="number" ${bandInp('sharp', band, band.sharp)} data-ctl="sharp"><span class="ctrl-val" data-val="sharp">${band.sharp.toFixed(1)}</span></div>
+<div class="band-row"><span class="ctrl-label">Drive</span><select data-ctl="driveType" style="flex:0 0 4rem"><option value="tanh" ${band.driveType==='tanh'?'selected':''}>Soft</option><option value="tube" ${band.driveType==='tube'?'selected':''}>Tube</option><option value="fold" ${band.driveType==='fold'?'selected':''}>Fold</option><option value="crush" ${band.driveType==='crush'?'selected':''}>Crush</option></select><input class="num-input" type="number" ${bandInp('drive', band, band.drive)} data-ctl="drive"><span class="ctrl-val" data-val="drive">${Math.round(band.drive*100)}%</span></div>
 <details class="band-subpanel">
   <summary>FX &amp; Space</summary>
   <div class="band-subpanel-body">
-    <div class="band-row"><span class="ctrl-label">Pan</span><input class="num-input" type="number" min="-100" max="100" step="1" value="${Math.round(band.pan*100)}" data-ctl="pan"><span class="ctrl-val" data-val="pan">${panLabel(band.pan)}</span></div>
-    <div class="band-row"><span class="ctrl-label">Dly Snd</span><input class="num-input" type="number" min="0" max="1" step="0.01" value="${band.dlySend}" data-ctl="dlySend"><span class="ctrl-val" data-val="dlySend">${Math.round(band.dlySend*100)}%</span></div>
-    <div class="band-row"><span class="ctrl-label">Rev Snd</span><input class="num-input" type="number" min="0" max="1" step="0.01" value="${band.revSend}" data-ctl="revSend"><span class="ctrl-val" data-val="revSend">${Math.round(band.revSend*100)}%</span></div>
-    <div class="band-row"><span class="ctrl-label">Filter</span><select data-ctl="filterType" style="flex:0 0 5rem"><option value="lowpass" ${band.filterType==='lowpass'?'selected':''}>LPF</option><option value="highpass" ${band.filterType==='highpass'?'selected':''}>HPF</option><option value="bandpass" ${band.filterType==='bandpass'?'selected':''}>BPF</option><option value="notch" ${band.filterType==='notch'?'selected':''}>Notch</option><option value="ladder" ${band.filterType==='ladder'?'selected':''}>Ladder</option><option value="formant" ${band.filterType==='formant'?'selected':''}>Formant</option><option value="comb" ${band.filterType==='comb'?'selected':''}>Comb</option></select><input class="num-input" type="number" min="20" max="20000" step="10" value="${band.filterFreq}" data-ctl="filterFreq"><span class="ctrl-val" data-val="filterFreq">${band.filterFreq}Hz</span></div>
-    <div class="band-row"><span class="ctrl-label">Res</span><input class="num-input" type="number" min="0.1" max="20" step="0.1" value="${band.filterQ}" data-ctl="filterQ"><span class="ctrl-val" data-val="filterQ">${band.filterQ.toFixed(1)}</span></div>
-    <div class="band-row"><span class="ctrl-label">F.LFO</span><input class="num-input" type="number" min="0.05" max="10" step="0.05" value="${band.filterLFORate}" data-ctl="filterLFORate"><span class="ctrl-val" data-val="filterLFORate">${band.filterLFORate.toFixed(2)}Hz</span></div>
-    <div class="band-row"><span class="ctrl-label">F.Dpth</span><input class="num-input" type="number" min="0" max="10000" step="10" value="${band.filterLFODepth}" data-ctl="filterLFODepth"><span class="ctrl-val" data-val="filterLFODepth">${band.filterLFODepth}</span></div>
+    <div class="band-row"><span class="ctrl-label">Pan</span><input class="num-input" type="number" ${bandInp('pan', band, band.pan)} data-ctl="pan"><span class="ctrl-val" data-val="pan">${panLabel(band.pan)}</span></div>
+    <div class="band-row"><span class="ctrl-label">Dly Snd</span><input class="num-input" type="number" ${bandInp('dlySend', band, band.dlySend)} data-ctl="dlySend"><span class="ctrl-val" data-val="dlySend">${Math.round(band.dlySend*100)}%</span></div>
+    <div class="band-row"><span class="ctrl-label">Rev Snd</span><input class="num-input" type="number" ${bandInp('revSend', band, band.revSend)} data-ctl="revSend"><span class="ctrl-val" data-val="revSend">${Math.round(band.revSend*100)}%</span></div>
+    <div class="band-row"><span class="ctrl-label">Filter</span><select data-ctl="filterType" style="flex:0 0 5rem"><option value="lowpass" ${band.filterType==='lowpass'?'selected':''}>LPF</option><option value="highpass" ${band.filterType==='highpass'?'selected':''}>HPF</option><option value="bandpass" ${band.filterType==='bandpass'?'selected':''}>BPF</option><option value="notch" ${band.filterType==='notch'?'selected':''}>Notch</option><option value="ladder" ${band.filterType==='ladder'?'selected':''}>Ladder</option><option value="formant" ${band.filterType==='formant'?'selected':''}>Formant</option><option value="comb" ${band.filterType==='comb'?'selected':''}>Comb</option></select><input class="num-input" type="number" ${bandInp('filterFreq', band, band.filterFreq)} data-ctl="filterFreq"><span class="ctrl-val" data-val="filterFreq">${band.filterFreq}Hz</span></div>
+    <div class="band-row"><span class="ctrl-label">Res</span><input class="num-input" type="number" ${bandInp('filterQ', band, band.filterQ)} data-ctl="filterQ"><span class="ctrl-val" data-val="filterQ">${band.filterQ.toFixed(1)}</span></div>
+    <div class="band-row"><span class="ctrl-label">F.LFO</span><input class="num-input" type="number" ${bandInp('filterLFORate', band, band.filterLFORate)} data-ctl="filterLFORate"><span class="ctrl-val" data-val="filterLFORate">${band.filterLFORate.toFixed(2)}Hz</span></div>
+    <div class="band-row"><span class="ctrl-label">F.Dpth</span><input class="num-input" type="number" ${bandInp('filterLFODepth', band, band.filterLFODepth)} data-ctl="filterLFODepth"><span class="ctrl-val" data-val="filterLFODepth">${band.filterLFODepth}</span></div>
   </div>
 </details>
 <details class="band-subpanel" ${band.mode==='seq'?'open':''}>
@@ -306,7 +323,7 @@ function buildCards() {
       card, toggle:q('.toggle'), dot:q('.pulse-dot'), freqDisp:q('.freq-display'),
       lfoCanvas, lfoCtx:lfoCanvas.getContext('2d'), lfoW:0, lfoH:0,
       sourceSel:q('[data-source]'), loadBtn:q('[data-load]'),
-      fmBody:q('[data-fmbody]'), removeBtn:q('[data-btn="remove"]'),
+      fmBody:q('[data-fmbody]'), pluckBody:q('[data-pluckbody]'), removeBtn:q('[data-btn="remove"]'),
       modeToggle:q('[data-mode]'), seqBody:q('[data-seqbody]'),
       gridCells:[], phIdx:-1, controls:{},
       _active:band.enabled, _lit:false, _freq:'',
@@ -357,6 +374,7 @@ function wireSourceUI(b, card) {
     if (v === 'smp' && !b.sampleBuf) { sel.value = b.source; return; }
     b.source = v; b._miniDirty = true;
     if (b.ui.fmBody) b.ui.fmBody.classList.toggle('hidden', v !== 'fm');
+    if (b.ui.pluckBody) b.ui.pluckBody.classList.toggle('hidden', v !== 'pluck');
     if (isPlaying && b.enabled) restartBand(b);
   });
   if (b.ui.removeBtn) b.ui.removeBtn.addEventListener('click', () => removeBand(b._idx));
@@ -385,13 +403,13 @@ async function loadSample(b, file) {
 function buildRhythmUI(b, card) {
   const body = b.ui.seqBody;
   body.innerHTML = `<div class="step-grid" data-grid></div>
-<div class="band-row"><span class="ctrl-label">Hits</span><input class="num-input" type="number" min="0" max="16" step="1" value="${b.hits}" data-rctl="hits"><span class="ctrl-val" data-rval="hits">${b.hits}</span></div>
-<div class="band-row"><span class="ctrl-label">Rotate</span><input class="num-input" type="number" min="0" max="15" step="1" value="${b.rotate}" data-rctl="rotate"><span class="ctrl-val" data-rval="rotate">${b.rotate}</span></div>
+<div class="band-row"><span class="ctrl-label">Hits</span><input class="num-input" type="number" ${rhythmInp('hits', b, b.hits)} data-rctl="hits"><span class="ctrl-val" data-rval="hits">${b.hits}</span></div>
+<div class="band-row"><span class="ctrl-label">Rotate</span><input class="num-input" type="number" ${rhythmInp('rotate', b, b.rotate)} data-rctl="rotate"><span class="ctrl-val" data-rval="rotate">${b.rotate}</span></div>
 <div class="adsr-grid">
-  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">A</span><input class="num-input" type="number" min="1" max="1000" step="1" value="${Math.round(b.a*1000)}" data-rctl="a"><span class="ctrl-val" data-rval="a">${Math.round(b.a*1000)}ms</span></div>
-  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">D</span><input class="num-input" type="number" min="10" max="2000" step="10" value="${Math.round(b.d*1000)}" data-rctl="d"><span class="ctrl-val" data-rval="d">${Math.round(b.d*1000)}ms</span></div>
-  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">S</span><input class="num-input" type="number" min="0" max="100" step="1" value="${Math.round(b.s*100)}" data-rctl="s"><span class="ctrl-val" data-rval="s">${Math.round(b.s*100)}%</span></div>
-  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">R</span><input class="num-input" type="number" min="10" max="3000" step="10" value="${Math.round(b.r*1000)}" data-rctl="r"><span class="ctrl-val" data-rval="r">${Math.round(b.r*1000)}ms</span></div>
+  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">A</span><input class="num-input" type="number" ${rhythmInp('a', b, b.a)} data-rctl="a"><span class="ctrl-val" data-rval="a">${Math.round(b.a*1000)}ms</span></div>
+  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">D</span><input class="num-input" type="number" ${rhythmInp('d', b, b.d)} data-rctl="d"><span class="ctrl-val" data-rval="d">${Math.round(b.d*1000)}ms</span></div>
+  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">S</span><input class="num-input" type="number" ${rhythmInp('s', b, b.s)} data-rctl="s"><span class="ctrl-val" data-rval="s">${Math.round(b.s*100)}%</span></div>
+  <div class="band-row"><span class="ctrl-label" style="width:1.5rem">R</span><input class="num-input" type="number" ${rhythmInp('r', b, b.r)} data-rctl="r"><span class="ctrl-val" data-rval="r">${Math.round(b.r*1000)}ms</span></div>
 </div>`;
   const grid = body.querySelector('[data-grid]');
   for (let i = 0; i < STEPS; i++) {
@@ -404,12 +422,12 @@ function buildRhythmUI(b, card) {
   }
   const rq = (s) => body.querySelector(s);
   const refreshGrid = () => { for (let i = 0; i < STEPS; i++) b.ui.gridCells[i].classList.toggle('on', !!b.steps[i]); };
-  rq('[data-rctl="hits"]').addEventListener('input', e => { b.hits = +e.target.value; rq('[data-rval="hits"]').textContent = b.hits; b.steps = euclidPattern(b.hits, STEPS, b.rotate); refreshGrid(); });
-  rq('[data-rctl="rotate"]').addEventListener('input', e => { b.rotate = +e.target.value; rq('[data-rval="rotate"]').textContent = b.rotate; b.steps = euclidPattern(b.hits, STEPS, b.rotate); refreshGrid(); });
-  rq('[data-rctl="a"]').addEventListener('input', e => { b.a = +e.target.value / 1000; rq('[data-rval="a"]').textContent = e.target.value + 'ms'; });
-  rq('[data-rctl="d"]').addEventListener('input', e => { b.d = +e.target.value / 1000; rq('[data-rval="d"]').textContent = e.target.value + 'ms'; });
-  rq('[data-rctl="s"]').addEventListener('input', e => { b.s = +e.target.value / 100; rq('[data-rval="s"]').textContent = e.target.value + '%'; });
-  rq('[data-rctl="r"]').addEventListener('input', e => { b.r = +e.target.value / 1000; rq('[data-rval="r"]').textContent = e.target.value + 'ms'; });
+  rq('[data-rctl="hits"]').addEventListener('input', e => { b.hits = roundParam('hits', +e.target.value, b); rq('[data-rval="hits"]').textContent = b.hits; b.steps = euclidPattern(b.hits, STEPS, b.rotate); refreshGrid(); });
+  rq('[data-rctl="rotate"]').addEventListener('input', e => { b.rotate = roundParam('rotate', +e.target.value, b); rq('[data-rval="rotate"]').textContent = b.rotate; b.steps = euclidPattern(b.hits, STEPS, b.rotate); refreshGrid(); });
+  rq('[data-rctl="a"]').addEventListener('input', e => { b.a = roundParam('a', +e.target.value / 1000, b); rq('[data-rval="a"]').textContent = Math.round(b.a * 1000) + 'ms'; });
+  rq('[data-rctl="d"]').addEventListener('input', e => { b.d = roundParam('d', +e.target.value / 1000, b); rq('[data-rval="d"]').textContent = Math.round(b.d * 1000) + 'ms'; });
+  rq('[data-rctl="s"]').addEventListener('input', e => { b.s = roundParam('s', +e.target.value / 100, b); rq('[data-rval="s"]').textContent = Math.round(b.s * 100) + '%'; });
+  rq('[data-rctl="r"]').addEventListener('input', e => { b.r = roundParam('r', +e.target.value / 1000, b); rq('[data-rval="r"]').textContent = Math.round(b.r * 1000) + 'ms'; });
   b.ui.modeToggle.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -431,6 +449,28 @@ const smooth = (param, v, tau) => {
   const safe = Math.max(0.0001, v);
   param.setTargetAtTime(Number.isFinite(safe) ? safe : 0.0001, audioCtx.currentTime, tau);
 };
+function clampAudioFreq(hz) {
+  return clampOscFreq(hz, audioCtx);
+}
+function setOscParam(param, hz) {
+  if (!param) return clampAudioFreq(hz);
+  const v = clampAudioFreq(hz);
+  param.value = v;
+  return v;
+}
+function smoothOsc(param, hz, tau) {
+  if (!param) return;
+  smooth(param, clampAudioFreq(hz), tau);
+}
+function capPitchLfoDepth(b) {
+  if (!b || b.lfoTarget !== 'pitch' || !b.filterLFOGain) return;
+  const base = b.carrier || 440;
+  const maxDepth = Math.max(0, nyquistHz(audioCtx) - base);
+  if (b.filterLFODepth > maxDepth) {
+    b.filterLFODepth = maxDepth;
+    b.filterLFOGain.gain.value = maxDepth;
+  }
+}
 function wset(b, name, v, discrete) {
   const p = b.worklet && b.worklet.parameters.get(name);
   if (!p || !audioCtx) return;
@@ -451,6 +491,7 @@ function connectLFOTarget(b) {
   else if (b.lfoTarget === 'pan' && b.panner?.pan) b.filterLFOGain.connect(b.panner.pan);
   else if (b.lfoTarget === 'fm' && b.fmGainNode?.gain) b.filterLFOGain.connect(b.fmGainNode.gain);
   else if (b.filter?.frequency) b.filterLFOGain.connect(b.filter.frequency);
+  capPitchLfoDepth(b);
 }
 function updateBandSyncParams(b) {
   if (!b || !audioCtx) return;
@@ -460,10 +501,42 @@ function updateBandSyncParams(b) {
   }
   b._miniDirty = true;
 }
+function refreshBandInputLimits(b) {
+  if (!b?.ui?.controls) return;
+  for (const key of ['pLow', 'pHigh', 'filterFreq', 'filterLFODepth', 'binauralOffset', 'pitch']) {
+    const ctl = b.ui.controls[key];
+    if (!ctl?.el) continue;
+    const a = paramInputAttrs(key, b, b[key]);
+    ctl.el.min = a.min;
+    ctl.el.max = a.max;
+    ctl.el.step = a.step;
+  }
+}
+
+function commitBandParam(b, c, el, valEl) {
+  const isNumeric = el.type === 'range' || el.type === 'number';
+  let raw = c.parse ? c.parse(el.value) : (isNumeric ? parseFloat(el.value) : el.value);
+  if (isNumeric && !Number.isFinite(raw)) return;
+  let stored = c.transform ? c.transform(raw) : uiToStored(c.key, raw);
+  if (isNumeric) {
+    stored = roundParam(c.key, stored, b);
+    const uiShow = c.transform ? storedToUi(c.key, stored) : storedToUi(c.key, stored);
+    if (String(el.value) !== String(uiShow)) el.value = uiShow;
+  } else {
+    stored = raw;
+  }
+  b[c.key] = stored;
+  if (valEl && c.fmt) valEl.textContent = c.fmt(b[c.key]);
+  if (c.apply) c.apply(b, b[c.key]);
+  if (c.key === 'carrier') refreshBandInputLimits(b);
+  if (c.dirtyMini) b._miniDirty = true;
+  logParamChange('UI', b.name, c.key, String(b[c.key]));
+}
+
 const BAND_CONTROLS = [
-  { key:'carrier', fmt:v=>v>=1000?(v/1000).toFixed(2)+' kHz':v+' Hz', apply:(b,v)=>{ if(b.micSync){b.micSync=false;const sb=b.ui.card.querySelector('[data-ctl="micSync"]');if(sb)sb.setAttribute('aria-pressed','false');} if(b.srcNode&&b.source==='osc')smooth(b.srcNode.frequency,v,CFG.UI_TAU); }},
+  { key:'carrier', fmt:v=>v>=1000?(v/1000).toFixed(2)+' kHz':v+' Hz', apply:(b,v)=>{ if(b.micSync){b.micSync=false;const sb=b.ui.card.querySelector('[data-ctl="micSync"]');if(sb)sb.setAttribute('aria-pressed','false');} if(b.srcNode&&b.source==='osc')smoothOsc(b.srcNode.frequency,v,CFG.UI_TAU); if(b.srcNodeL) setOscParam(b.srcNodeL.frequency, v - (b.binauralOffset||0)/2); if(b.srcNodeR) setOscParam(b.srcNodeR.frequency, v + (b.binauralOffset||0)/2); capPitchLfoDepth(b); }},
   { key:'cType', evt:'change', apply:(b,v)=>{ if(b.srcNode&&b.source==='osc')b.srcNode.type=v; }},
-  { key:'fmRatio', fmt:v=>v.toFixed(2)+'x', apply:(b,v)=>{ if(b.fmModNode)smooth(b.fmModNode.frequency,b.carrier*v,CFG.UI_TAU); }},
+  { key:'fmRatio', fmt:v=>v.toFixed(2)+'x', apply:(b,v)=>{ if(b.fmModNode)smoothOsc(b.fmModNode.frequency,fmModFrequency(b.carrier,v,audioCtx),CFG.UI_TAU); if(b.fmModNodeL) setOscParam(b.fmModNodeL.frequency, fmModFrequency(b.carrier - (b.binauralOffset||0)/2, v, audioCtx)); if(b.fmModNodeR) setOscParam(b.fmModNodeR.frequency, fmModFrequency(b.carrier + (b.binauralOffset||0)/2, v, audioCtx)); }},
   { key:'fmIndex', fmt:v=>String(v), apply:(b,v)=>{ if(b.fmGainNode)smooth(b.fmGainNode.gain,v*b.carrier*0.05,CFG.UI_TAU); }},
   { key:'binauralOffset', fmt:v=>(v>0?'+':'')+v.toFixed(1)+'Hz', apply:(b)=>restartBand(b) },
   { key:'lfoTarget', evt:'change', apply:(b)=>connectLFOTarget(b) },
@@ -483,7 +556,8 @@ const BAND_CONTROLS = [
   { key:'filterFreq', fmt:v=>v+'Hz', apply:(b,v)=>b.filter&&smooth(b.filter.frequency,v,CFG.UI_TAU) },
   { key:'filterQ', fmt:v=>v.toFixed(1), apply:(b,v)=>applyFilterType(b.filter,b.filterType,b.filterFreq,v) },
   { key:'filterLFORate', fmt:v=>v.toFixed(2)+'Hz', apply:(b,v)=>b.filterLFO&&smooth(b.filterLFO.frequency,v,CFG.UI_TAU) },
-  { key:'filterLFODepth', fmt:v=>String(v), apply:(b,v)=>b.filterLFOGain&&smooth(b.filterLFOGain.gain,v,CFG.UI_TAU) },
+  { key:'filterLFODepth', fmt:v=>String(v), apply:(b,v)=>{ b.filterLFODepth=v; capPitchLfoDepth(b); if(b.filterLFOGain) smooth(b.filterLFOGain.gain,b.filterLFODepth,CFG.UI_TAU); }},
+  { key:'pluckDecay', fmt:v=>v.toFixed(2), apply:(b,v)=>{ if(b.pluckFb) b.pluckFb.gain.value = Math.min(0.98, 0.90 + v); }},
 ];
 function wireBand(b, card) {
   for (const c of BAND_CONTROLS) {
@@ -491,18 +565,7 @@ function wireBand(b, card) {
     if (!el) continue;
     const valEl = card.querySelector(`[data-val="${c.key}"]`);
     b.ui.controls[c.key] = { el, valEl, ctl: c };
-    const commit = () => {
-      const isNumeric = el.type === 'range' || el.type === 'number';
-      let raw = c.parse ? c.parse(el.value) : (isNumeric ? parseFloat(el.value) : el.value);
-      if (isNumeric && !Number.isFinite(raw)) return;
-      if (isNumeric && el.min !== '' && raw < parseFloat(el.min)) { raw = parseFloat(el.min); el.value = raw; }
-      if (isNumeric && el.max !== '' && raw > parseFloat(el.max)) { raw = parseFloat(el.max); el.value = raw; }
-      b[c.key] = c.transform ? c.transform(raw) : raw;
-      if (valEl && c.fmt) valEl.textContent = c.fmt(b[c.key]);
-      if (c.apply) c.apply(b, b[c.key]);
-      if (c.dirtyMini) b._miniDirty = true;
-      logParamChange('UI', b.name, c.key, String(b[c.key]));
-    };
+    const commit = () => commitBandParam(b, c, el, valEl);
     el.addEventListener(c.evt || 'change', commit);
     if (el.type === 'number') el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); el.blur(); } });
     if (el.type === 'range' || el.type === 'number') {
@@ -539,7 +602,7 @@ function addBand(customDef, opts = {}) {
   const i = bands.length;
   if (i >= CFG.MAX_BANDS) return null;
   const targetTotal = Math.max(i + 1, customDef ? i + 1 : CFG.ARC_STREAM_BANDS);
-  const baseDef = customDef || getBandDefs(Math.min(targetTotal, CFG.MAX_BANDS))[i];
+  const baseDef = customDef ? clampBandParams({ ...customDef }) : getBandDefs(Math.min(targetTotal, CFG.MAX_BANDS))[i];
   if (!baseDef) return null;
   const b = {
     ...baseDef, steps: Array.isArray(baseDef.steps) ? baseDef.steps.slice() : euclidPattern(baseDef.hits, STEPS, baseDef.rotate),
@@ -561,6 +624,88 @@ function addBand(customDef, opts = {}) {
   logParamChange('Band Engine', 'System', 'Add Band', `Added ${b.name}`);
   return b;
 }
+
+function readSavedSinkId() {
+  try { return localStorage.getItem(AUDIO_SINK_KEY) || ''; } catch (_) { return ''; }
+}
+
+function setAudioOutputStatus(text) {
+  const el = $('audio-output-status');
+  if (el) el.textContent = text;
+}
+
+function supportsAudioSinkSelect() {
+  return typeof AudioContext !== 'undefined'
+    && 'setSinkId' in AudioContext.prototype;
+}
+
+async function refreshAudioOutputList() {
+  const sel = $('audio-output-select');
+  if (!sel) return;
+  if (!supportsAudioSinkSelect()) {
+    sel.disabled = true;
+    setAudioOutputStatus('unsupported');
+    return;
+  }
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    sel.disabled = true;
+    setAudioOutputStatus('no enum');
+    return;
+  }
+  let outputs = [];
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    outputs = devices.filter((d) => d.kind === 'audiooutput');
+  } catch (e) {
+    console.warn('enumerateDevices failed:', e);
+    setAudioOutputStatus('enum error');
+    return;
+  }
+  const prev = sel.value || selectedSinkId || readSavedSinkId();
+  sel.replaceChildren();
+  const defOpt = document.createElement('option');
+  defOpt.value = '';
+  defOpt.textContent = 'System Default';
+  sel.appendChild(defOpt);
+  outputs.forEach((d, i) => {
+    const opt = document.createElement('option');
+    opt.value = d.deviceId;
+    opt.textContent = d.label || `Output ${i + 1}`;
+    sel.appendChild(opt);
+  });
+  sel.disabled = !audioCtx;
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  else sel.value = '';
+  const label = sel.selectedOptions[0]?.textContent || 'System Default';
+  setAudioOutputStatus(label.length > 28 ? label.slice(0, 27) + '…' : label);
+}
+
+async function applyAudioSink(sinkId) {
+  selectedSinkId = sinkId || '';
+  try { localStorage.setItem(AUDIO_SINK_KEY, selectedSinkId); } catch (_) {}
+  const sel = $('audio-output-select');
+  if (sel) sel.value = selectedSinkId;
+  if (!audioCtx?.setSinkId) {
+    setAudioOutputStatus(supportsAudioSinkSelect() ? 'init on play' : 'unsupported');
+    return;
+  }
+  try {
+    await audioCtx.setSinkId(selectedSinkId);
+    const label = sel?.selectedOptions[0]?.textContent || 'System Default';
+    setAudioOutputStatus(label.length > 28 ? label.slice(0, 27) + '…' : label);
+    logParamChange('Audio', 'System', 'Output', label);
+  } catch (e) {
+    console.warn('setSinkId failed:', e);
+    setAudioOutputStatus('route failed');
+  }
+}
+
+async function initAudioOutputRouting() {
+  selectedSinkId = readSavedSinkId();
+  await refreshAudioOutputList();
+  if (selectedSinkId) await applyAudioSink(selectedSinkId);
+}
+
 function removeBand(index) {
   if (bands.length <= 1) return;
   const b = bands[index];
@@ -574,6 +719,8 @@ function removeBand(index) {
 async function ensureAudio() {
   if (audioCtx) {
     if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => {});
+    const sel = $('audio-output-select');
+    if (sel && supportsAudioSinkSelect()) sel.disabled = false;
     return;
   }
   audioCtx = new (window.AudioContext || window.webkitAudioContext)({
@@ -604,6 +751,7 @@ async function ensureAudio() {
     } catch (e) { console.warn('Worklet fallback:', e.message); engineMode = 'scheduler'; }
   }
   updateSysUI();
+  await initAudioOutputRouting();
 }
 function buildFxBus() {
   dlyBus = audioCtx.createGain();
@@ -836,6 +984,19 @@ function applyBandPaletteParams(b, params, opts = {}) {
   if (needsRestart && isPlaying && b.enabled) restartBand(b);
   return needsRestart;
 }
+/** Lightweight morph apply — audio params only, no restarts or UI sync. */
+function applyBandMorphParams(b, params) {
+  if (!params || !Object.keys(params).length) return;
+  for (const key of ARC_MORPH_KEYS) {
+    if (params[key] === undefined) continue;
+    b[key] = params[key];
+    const c = BAND_CONTROLS.find((x) => x.key === key);
+    if (c?.apply) c.apply(b, params[key]);
+  }
+  if (params.drive != null && b.shaper) {
+    b.shaper.curve = b.drive > 0.001 ? makeDriveCurve(b.drive, b.driveType) : null;
+  }
+}
 function snapshotArcSessionBaseline() {
   arcPaletteBaseline = bands.map((b) => {
     const snap = { enabled: b.enabled };
@@ -864,15 +1025,21 @@ function applyArcFxMorph(target, u) {
   if (dampL) { dampL.frequency.setTargetAtTime(fxState.damp, t, CFG.UI_TAU); dampR.frequency.setTargetAtTime(fxState.damp, t, CFG.UI_TAU); }
   if (dlyWetL) { dlyWetL.gain.setTargetAtTime(fxState.dlyReturn, t, CFG.UI_TAU); dlyWetR.gain.setTargetAtTime(fxState.dlyReturn, t, CFG.UI_TAU); }
   if (revWet) revWet.gain.setTargetAtTime(fxState.revReturn, t, CFG.UI_TAU);
-  if (target.revPreset && morphed.revPreset && morphed.revPreset !== fxState.revPreset) {
-    fxState.revPreset = morphed.revPreset;
-    if (convolver) convolver.buffer = makeImpulse(fxState.revPreset);
-    updateFxReadouts();
+  const wantPreset = morphed.revPreset;
+  if (wantPreset && wantPreset !== fxState.revPreset && u >= 0.5) {
+    if (arcStream?._fxPresetApplied !== wantPreset) {
+      fxState.revPreset = wantPreset;
+      if (convolver) convolver.buffer = makeImpulse(fxState.revPreset);
+      if (arcStream) arcStream._fxPresetApplied = wantPreset;
+      updateFxReadouts();
+    }
   }
 }
 function applyArcMorph(arc, progress) {
   if (rampState.arcMorph === false || !arc?.palette?.patches?.length || !arcPaletteBaseline) return;
   const u = sampleArcMorph(arc, progress);
+  if (arcStream && Math.abs(u - (arcStream.lastMorphU ?? -1)) < CFG.ARC_MORPH_STEP) return;
+  if (arcStream) arcStream.lastMorphU = u;
   for (const patch of arc.palette.patches) {
     const b = bands[patch.bandIndex];
     const snap = arcPaletteBaseline[patch.bandIndex];
@@ -886,7 +1053,7 @@ function applyArcMorph(arc, progress) {
         morphed[key] = from + (to - from) * u;
       }
     }
-    if (Object.keys(morphed).length) applyBandPaletteParams(b, morphed, { silent: true });
+    if (Object.keys(morphed).length) applyBandMorphParams(b, morphed);
   }
   if (arc.fxSnapshot) applyArcFxMorph(arc.fxSnapshot, u);
 }
@@ -900,8 +1067,10 @@ function applyArcOrchestration(arc) {
   if (!rampState.arcOrchestration) return;
   const indices = arc?.orchestration?.enableIndices;
   if (!indices?.length) return;
+  const enableSet = new Set(indices);
   for (let i = 0; i < bands.length; i++) {
-    setBandEnabled(bands[i], indices.includes(i));
+    const want = enableSet.has(i);
+    if (bands[i].enabled !== want) setBandEnabled(bands[i], want);
   }
   updateArcOrchestrationUI(indices);
 }
@@ -911,7 +1080,7 @@ function restoreArcSessionBaseline() {
     const snap = arcPaletteBaseline[i];
     const b = bands[i];
     if (!snap || !b) continue;
-    setBandEnabled(b, !!snap.enabled);
+    if (b.enabled !== !!snap.enabled) setBandEnabled(b, !!snap.enabled);
     const params = {};
     for (const k of ARC_PALETTE_KEYS) params[k] = snap[k];
     applyBandPaletteParams(b, params);
@@ -987,6 +1156,8 @@ function restartArcStream() {
   if (arcStream) {
     arcStream.phaseStart = 0;
     arcStream.sessionAppliedIndex = -1;
+    arcStream.lastMorphU = -1;
+    arcStream._fxPresetApplied = null;
   }
   renderArcQueuePreview();
 }
@@ -1031,7 +1202,7 @@ function applyRampExaggeration(currentBpm, exaggerateMode, depth, bpmLo, bpmHi, 
       }
     }
     if ((mode === 'vinyl' || mode === 'combo') && b.srcNode && b.source === 'osc') {
-      smooth(b.srcNode.frequency, b.carrier * Math.max(0.2, 1 - E * 0.6), CFG.UI_TAU);
+      smoothOsc(b.srcNode.frequency, b.carrier * Math.max(0.2, 1 - E * 0.6), CFG.UI_TAU);
     }
   }
 }
@@ -1049,6 +1220,8 @@ function updateArcStream(nowTime) {
         logParamChange('Arc Orchestration', item.name, orch.label, `${orch.enableIndices.length} bands`);
       }
       arcStream.sessionAppliedIndex = arcStream.index;
+      arcStream.lastMorphU = -1;
+      arcStream._fxPresetApplied = null;
     }
   } else if (arcStream.sessionAppliedIndex !== -1) {
     restoreArcSessionBaseline();
@@ -1513,7 +1686,7 @@ function processMicSignal() {
     for (let i = 0; i < bands.length; i++) {
       const b = bands[i];
       if (b.micSync && b.srcNode?.frequency && smoothedPitch > 20) {
-        smooth(b.srcNode.frequency, smoothedPitch, CFG.UI_TAU * 2);
+        smoothOsc(b.srcNode.frequency, smoothedPitch, CFG.UI_TAU * 2);
       }
     }
   }
@@ -1608,20 +1781,21 @@ function startBand(b) {
   if (srcType === 'smp' && !b.sampleBuf) srcType = 'osc';
   if (srcType === 'fm') {
     const hasBinaural = b.binauralOffset && Math.abs(b.binauralOffset) > 0.01;
+    const car = clampAudioFreq(b.carrier);
     if (hasBinaural) {
       b.srcNodeL = audioCtx.createOscillator(); b.srcNodeL.type = b.cType;
-      b.srcNodeL.frequency.value = Math.max(20, b.carrier - b.binauralOffset/2);
+      const fL = setOscParam(b.srcNodeL.frequency, car - b.binauralOffset / 2);
       b.fmModNodeL = audioCtx.createOscillator(); b.fmModNodeL.type = 'sine';
-      b.fmModNodeL.frequency.value = b.srcNodeL.frequency.value * (b.fmRatio||2);
+      setOscParam(b.fmModNodeL.frequency, fmModFrequency(fL, b.fmRatio, audioCtx));
       b.fmGainNodeL = audioCtx.createGain();
-      b.fmGainNodeL.gain.value = (b.fmIndex||20) * b.srcNodeL.frequency.value * 0.05;
+      b.fmGainNodeL.gain.value = (b.fmIndex||20) * fL * 0.05;
       b.fmModNodeL.connect(b.fmGainNodeL); b.fmGainNodeL.connect(b.srcNodeL.frequency);
       b.srcNodeR = audioCtx.createOscillator(); b.srcNodeR.type = b.cType;
-      b.srcNodeR.frequency.value = Math.max(20, b.carrier + b.binauralOffset/2);
+      const fR = setOscParam(b.srcNodeR.frequency, car + b.binauralOffset / 2);
       b.fmModNodeR = audioCtx.createOscillator(); b.fmModNodeR.type = 'sine';
-      b.fmModNodeR.frequency.value = b.srcNodeR.frequency.value * (b.fmRatio||2);
+      setOscParam(b.fmModNodeR.frequency, fmModFrequency(fR, b.fmRatio, audioCtx));
       b.fmGainNodeR = audioCtx.createGain();
-      b.fmGainNodeR.gain.value = (b.fmIndex||20) * b.srcNodeR.frequency.value * 0.05;
+      b.fmGainNodeR.gain.value = (b.fmIndex||20) * fR * 0.05;
       b.fmModNodeR.connect(b.fmGainNodeR); b.fmGainNodeR.connect(b.srcNodeR.frequency);
       b.merger = audioCtx.createChannelMerger(2);
       b.srcNodeL.connect(b.merger, 0, 0);
@@ -1631,9 +1805,11 @@ function startBand(b) {
       b.fmModNodeL.start(t0); b.fmModNodeR.start(t0);
       b.srcNode = b.srcNodeL;
     } else {
-      b.srcNode = audioCtx.createOscillator(); b.srcNode.type = b.cType; b.srcNode.frequency.value = b.carrier;
-      b.fmModNode = audioCtx.createOscillator(); b.fmModNode.type = 'sine'; b.fmModNode.frequency.value = b.carrier * (b.fmRatio||2);
-      b.fmGainNode = audioCtx.createGain(); b.fmGainNode.gain.value = (b.fmIndex||20) * b.carrier * 0.05;
+      b.srcNode = audioCtx.createOscillator(); b.srcNode.type = b.cType;
+      setOscParam(b.srcNode.frequency, car);
+      b.fmModNode = audioCtx.createOscillator(); b.fmModNode.type = 'sine';
+      setOscParam(b.fmModNode.frequency, fmModFrequency(car, b.fmRatio, audioCtx));
+      b.fmGainNode = audioCtx.createGain(); b.fmGainNode.gain.value = (b.fmIndex||20) * car * 0.05;
       b.fmModNode.connect(b.fmGainNode); b.fmGainNode.connect(b.srcNode.frequency);
       b.fmModNode.start(t0); b.srcNode.connect(b.pulseGain);
       b.srcNode.start(t0);
@@ -1647,19 +1823,21 @@ function startBand(b) {
     b.pluckFb = audioCtx.createGain(); b.pluckFb.gain.value = Math.min(0.98, 0.90+(b.pluckDecay||0.05));
     b.srcNode.connect(b.pluckDelay); b.pluckDelay.connect(b.pluckFb); b.pluckFb.connect(b.pluckDelay); b.pluckDelay.connect(b.pulseGain);
   } else if (srcType === 'sub') {
-    b.srcNode = audioCtx.createOscillator(); b.srcNode.type = 'sine'; b.srcNode.frequency.value = Math.max(20, b.carrier*0.5);
+    b.srcNode = audioCtx.createOscillator(); b.srcNode.type = 'sine';
+    setOscParam(b.srcNode.frequency, b.carrier * 0.5);
     b.srcNode.connect(b.pulseGain);
   } else if (srcType === 'osc') {
     if (b.binauralOffset && Math.abs(b.binauralOffset) > 0.01) {
       b.srcNodeL = audioCtx.createOscillator(); b.srcNodeR = audioCtx.createOscillator();
       b.srcNodeL.type = b.cType; b.srcNodeR.type = b.cType;
-      b.srcNodeL.frequency.value = Math.max(20, b.carrier - b.binauralOffset/2);
-      b.srcNodeR.frequency.value = Math.max(20, b.carrier + b.binauralOffset/2);
+      setOscParam(b.srcNodeL.frequency, b.carrier - b.binauralOffset / 2);
+      setOscParam(b.srcNodeR.frequency, b.carrier + b.binauralOffset / 2);
       b.merger = audioCtx.createChannelMerger(2);
       b.srcNodeL.connect(b.merger,0,0); b.srcNodeR.connect(b.merger,0,1); b.merger.connect(b.pulseGain);
       b.srcNodeL.start(t0); b.srcNodeR.start(t0); b.srcNode = b.srcNodeL;
     } else {
-      b.srcNode = audioCtx.createOscillator(); b.srcNode.type = b.cType; b.srcNode.frequency.value = b.carrier;
+      b.srcNode = audioCtx.createOscillator(); b.srcNode.type = b.cType;
+      setOscParam(b.srcNode.frequency, b.carrier);
       b.srcNode.connect(b.pulseGain);
     }
   } else {
@@ -1770,16 +1948,20 @@ function applyState(state) {
   if (!state || !Array.isArray(state.bands)) return;
   if (state.fx) Object.assign(fxState, state.fx);
   if (state.ramp) Object.assign(rampState, state.ramp);
+  state.bands.forEach((s, i) => {
+    s.name = bandLabel(i, state.bands.length);
+  });
   for (let i = 0; i < bands.length; i++) stopBand(bands[i]);
   bands.length = 0;
   arcPaletteBaseline = null;
   arcFxBaseline = null;
   arcStream = null;
   // Batch rebuild — one DOM pass instead of N
-  state.bands.forEach(s => addBand(s, { rebuild: false }));
+  state.bands.forEach(s => addBand(clampBandParams({ ...s }), { rebuild: false }));
   transport.running = false;
   rebuildCards();
   syncFxUI(); syncRampUI(); updateSysUI(); updateBandCountUI();
+  if (bands.length >= 24) setBandViewMode(defaultBandViewMode(bands.length));
   if (rampState.mode === 'arc-stream' && rampState.enabled) restartArcStream();
   if (isPlaying) {
     for (let i = 0; i < bands.length; i++) if (bands[i].enabled) startBand(bands[i]);
@@ -1906,19 +2088,45 @@ function generatePresetState(type, baseState) {
       b.revSend = 0.35 + i * 0.04; b.dlySend = 0.05;
     });
   }
-  else if (type === 'arc-stream' || type === 'arc-orchestra') {
-    base.bands = bandDefsToState(getBandDefs(CFG.ARC_STREAM_BANDS));
+  else if (type === 'full-spectrum-48') {
+    base.bands = bandDefsToState(getFullSpectrumBandDefs(CFG.MAX_BANDS));
+    base.fx.tempo = 90;
+    base.fx.subdiv = 0.375;
+    base.fx.feedback = 0.38;
+    base.fx.damp = 2600;
+    base.fx.dlyReturn = 0.32;
+    base.fx.revPreset = 'hall';
+    base.fx.revReturn = 0.4;
+    base.ramp.enabled = false;
+    base.ramp.mode = 'micro-loops';
+    base.bands.forEach((b) => {
+      b.enabled = true;
+      b.bpmSync = true;
+      b.source = 'osc';
+      b.cType = 'sine';
+      b.mode = 'cont';
+      b.driveType = 'fold';
+      b.lfoTarget = 'filter';
+      b.filterLFODepth = 0;
+    });
+  }
+  else if (type === 'arc-stream' || type === 'arc-orchestra' || type === 'arc-orchestra-48') {
+    const bandCount = type === 'arc-orchestra-48' ? CFG.MAX_BANDS : CFG.ARC_STREAM_BANDS;
+    base.bands = bandDefsToState(getBandDefs(bandCount));
     base.fx.tempo = 120; base.fx.feedback = 0.6; base.fx.damp = 1800; base.fx.revReturn = 0.48;
     base.ramp.enabled = true; base.ramp.mode = 'arc-stream';
-    base.ramp.arcGapProfile = 'mixed'; base.ramp.arcIntensity = type === 'arc-orchestra' ? 'extreme' : 'dramatic';
+    base.ramp.arcGapProfile = 'mixed';
+    base.ramp.arcIntensity = (type === 'arc-orchestra' || type === 'arc-orchestra-48') ? 'extreme' : 'dramatic';
     base.ramp.arcOrchestration = true;
     base.ramp.arcMorph = true;
     base.ramp.variationsEnabled = true; base.ramp.varInterval = 1; base.ramp.varCount = 4;
     base.bands.forEach((b, i) => {
       b.bpmSync = true;
-      b.enabled = i < 9;
-      b.mode = i > Math.floor(CFG.ARC_STREAM_BANDS * 0.55) ? 'seq' : 'cont';
-      b.vol = Math.max(0.08, 0.28 - (i / CFG.ARC_STREAM_BANDS) * 0.12);
+      b.enabled = i < Math.min(9, bandCount);
+      b.driveType = 'fold';
+      if (b.drive < 0.05) b.drive = 0.05 + (i % 6) * 0.01;
+      b.mode = i > Math.floor(bandCount * 0.55) ? 'seq' : 'cont';
+      b.vol = Math.max(0.08, 0.28 - (i / bandCount) * 0.12);
       b.hits = 3 + (i % 7); b.rotate = i * 2;
     });
   }
@@ -1928,8 +2136,8 @@ function generatePresetState(type, baseState) {
 
 function exportPresetPack() {
   const pack = { app: 'pulseforge', version: 1, type: 'pack', presets: {} };
-  const types = ['meditation', 'cyberpunk', 'harp', 'drone', 'fm-binaural', 'tectonic', 'gamma-ascension', 'glitch-matrix', 'chaos-cascade', 'tectonic-breath', 'arc-stream', 'arc-orchestra'];
-  const names = ['Meditation (432Hz)', 'Cyberpunk (140BPM)', 'Pluck Ensemble', 'Cosmic Drone', 'Crisp FM Binaural', 'Sub-Harmonic Tectonic', 'Neural Gamma Ascension', 'Glitch Matrix', 'Chaos Cascade (500→1)', 'Tectonic Breath', 'Arc Stream Auto', '36-Band Arc Orchestra'];
+  const types = ['meditation', 'cyberpunk', 'harp', 'drone', 'fm-binaural', 'tectonic', 'gamma-ascension', 'glitch-matrix', 'chaos-cascade', 'tectonic-breath', 'full-spectrum-48', 'arc-stream', 'arc-orchestra', 'arc-orchestra-48'];
+  const names = ['Meditation (432Hz)', 'Cyberpunk (140BPM)', 'Pluck Ensemble', 'Cosmic Drone', 'Crisp FM Binaural', 'Sub-Harmonic Tectonic', 'Neural Gamma Ascension', 'Glitch Matrix', 'Chaos Cascade (500→1)', 'Tectonic Breath', '48-Band Full Spectrum', 'Arc Stream Auto', '36-Band Arc Orchestra', '48-Band Arc Orchestra'];
   types.forEach((type, i) => { pack.presets[names[i]] = generatePresetState(type, getDefaultState()); });
   downloadBlob(new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' }), 'pulseforge-presets-pack.json');
   flashBtn('pack-export');
@@ -2040,9 +2248,15 @@ function buildOfflineBand(off, b, mGain, dlyB, revB, t0, durSec) {
   const panner = off.createStereoPanner(); panner.pan.value = b.pan;
   const fLFO = off.createOscillator(); fLFO.type='sine'; fLFO.frequency.value=b.filterLFORate;
   const fDepth = off.createGain(); fDepth.gain.value = b.filterLFODepth;
-  if (srcType==='fm') { src=off.createOscillator();src.type=b.cType;src.frequency.value=b.carrier;const mod=off.createOscillator();mod.type='sine';mod.frequency.value=b.carrier*(b.fmRatio||2);const modG=off.createGain();modG.gain.value=(b.fmIndex||20)*b.carrier*0.05;mod.connect(modG);modG.connect(src.frequency);mod.start(t0);src.connect(pulseGain); }
-  else if (srcType==='osc') { src=off.createOscillator();src.type=b.cType;src.frequency.value=b.carrier;src.connect(pulseGain); }
-  else if (srcType==='sub') { src=off.createOscillator();src.type='sine';src.frequency.value=Math.max(20,b.carrier*0.5);src.connect(pulseGain); }
+  if (srcType==='fm') {
+    const car = clampOscFreq(b.carrier, off);
+    src=off.createOscillator();src.type=b.cType;src.frequency.value=car;
+    const mod=off.createOscillator();mod.type='sine';
+    mod.frequency.value=fmModFrequency(car,b.fmRatio,off);
+    const modG=off.createGain();modG.gain.value=(b.fmIndex||20)*car*0.05;mod.connect(modG);modG.connect(src.frequency);mod.start(t0);src.connect(pulseGain);
+  }
+  else if (srcType==='osc') { src=off.createOscillator();src.type=b.cType;src.frequency.value=clampOscFreq(b.carrier,off);src.connect(pulseGain); }
+  else if (srcType==='sub') { src=off.createOscillator();src.type='sine';src.frequency.value=clampOscFreq(b.carrier*0.5,off);src.connect(pulseGain); }
   else { src=off.createBufferSource();src.buffer=srcType==='smp'?b.sampleBuf:makeNoiseBuffer(off,srcType);src.loop=true;src.playbackRate.value=Math.pow(2,b.pitch/12);src.connect(pulseGain); }
   pulseGain.connect(level);level.connect(shaper);shaper.connect(filter);filter.connect(panner);panner.connect(mGain);
   fLFO.connect(fDepth);fDepth.connect(filter.frequency);
@@ -2091,6 +2305,7 @@ function updateBandVisual(b, nowA, dt) {
       }
       const s = Math.sin(b.visPulse * TAU);
       b.pulseVal = Math.pow(s > 0 ? s : 0, b.sharp) * b.vol;
+      if ((frameCount & 3) === (b._idx & 3)) b._miniDirty = true;
     }
   } else {
     b.pulseVal *= Math.exp(-10 * dt);
@@ -2157,16 +2372,20 @@ function resize() {
   buildGrid();
 }
 let frameCount = 0;
-function drawViz(dt) {
-  const cx = vizW / 2, cy = vizH / 2;
-  vizCtx.fillStyle = cachedCanvasBg;
-  vizCtx.fillRect(0, 0, vizW, vizH);
-  if (gridLayer) vizCtx.drawImage(gridLayer, 0, 0, vizW, vizH);
-  for (let i = 0; i < bands.length; i++) {
-    const b = bands[i];
+
+function spectrumTierCount(n) {
+  if (n >= 48) return CFG.VIZ_SPECTRUM_TIERS_48;
+  if (n >= 36) return CFG.VIZ_SPECTRUM_TIERS_36;
+  return 4;
+}
+
+/** Classic concentric rings — best for ≤23 bands. */
+function drawVizClassic(drawList, cx, cy) {
+  const ringSpacing = Math.min(vizH, vizW) * (0.35 / Math.max(1, drawList.length));
+  for (let vi = 0; vi < drawList.length; vi++) {
+    const b = drawList[vi];
     const bandCx = cx + b.pan * (vizW * CFG.PAN_VIS_WIDTH);
-    const ringSpacing = Math.min(vizH, vizW) * (0.35 / Math.max(1, bands.length));
-    const baseR = Math.max(10, 14 + i * ringSpacing);
+    const baseR = Math.max(10, 14 + vi * ringSpacing);
     const pR = baseR + b.pulseVal * CFG.PULSE_RADIUS;
     if (!b.enabled && b.pulseVal < 0.01) {
       vizCtx.beginPath(); vizCtx.arc(bandCx, cy, baseR, 0, TAU);
@@ -2182,25 +2401,148 @@ function drawViz(dt) {
     vizCtx.globalAlpha = 0.12 + b.pulseVal * 0.2;
     vizCtx.stroke();
     const alpha = (b.pulseVal * 0.18).toFixed(3);
-    const grad = vizCtx.createRadialGradient(bandCx, cy, Math.max(1, pR-10), bandCx, cy, pR+4);
+    const grad = vizCtx.createRadialGradient(bandCx, cy, Math.max(1, pR - 10), bandCx, cy, pR + 4);
     grad.addColorStop(0, `rgba(${b.rgb},0)`);
     grad.addColorStop(1, `rgba(${b.rgb},${alpha})`);
-    vizCtx.beginPath(); vizCtx.arc(bandCx, cy, pR+4, 0, TAU);
+    vizCtx.beginPath(); vizCtx.arc(bandCx, cy, pR + 4, 0, TAU);
     vizCtx.fillStyle = grad; vizCtx.fill();
-    vizCtx.font = '9px "Space Mono"'; vizCtx.fillStyle = b.color;
-    vizCtx.globalAlpha = 0.6 + b.pulseVal * 0.4; vizCtx.textAlign = 'center';
-    vizCtx.fillText(b.name, bandCx, cy - pR - 8); vizCtx.globalAlpha = 1;
+    if (drawList.length <= 18) {
+      vizCtx.font = '9px "Space Mono"'; vizCtx.fillStyle = b.color;
+      vizCtx.globalAlpha = 0.6 + b.pulseVal * 0.4; vizCtx.textAlign = 'center';
+      vizCtx.fillText(b.name, bandCx, cy - pR - 8); vizCtx.globalAlpha = 1;
+    }
     if (!REDUCED && isPlaying && b.enabled && b.pulseVal > 0.7 * b.vol && Math.random() < 0.35) {
-      emitParticle(i, bandCx, cy, pR);
+      emitParticle(b._idx, bandCx, cy, pR);
     }
   }
+}
+
+/**
+ * Orbital constellation viz for 24–48 bands — tier rings with nodes by index + pan.
+ * Avoids overcrowded concentric stacks while keeping pulse glow + particles.
+ */
+function drawVizConstellation(layoutList, cx, cy) {
+  const n = layoutList.length;
+  const tiers = spectrumTierCount(n);
+  const perTier = Math.ceil(n / tiers);
+  const maxR = Math.min(vizW, vizH) * 0.44;
+  const minR = Math.max(14, maxR * 0.14);
+
+  for (let t = 0; t < tiers; t++) {
+    const tierT = tiers > 1 ? t / (tiers - 1) : 0;
+    const orbitR = minR + tierT * (maxR - minR);
+    vizCtx.beginPath();
+    vizCtx.arc(cx, cy, orbitR, 0, TAU);
+    vizCtx.strokeStyle = cachedGridLine;
+    vizCtx.lineWidth = 0.6;
+    vizCtx.globalAlpha = 0.28 + tierT * 0.12;
+    vizCtx.stroke();
+    vizCtx.globalAlpha = 1;
+  }
+
+  for (let i = 0; i < n; i++) {
+    const b = layoutList[i];
+    const idx = b._idx ?? i;
+    const tier = Math.min(tiers - 1, Math.floor(idx / perTier));
+    const posInTier = idx % perTier;
+    const countInTier = Math.min(perTier, n - tier * perTier);
+    const tierT = tiers > 1 ? tier / (tiers - 1) : 0;
+    const baseR = minR + tierT * (maxR - minR);
+    const angleSpread = TAU / Math.max(1, countInTier);
+    const angle = -Math.PI / 2 + posInTier * angleSpread + b.pan * 0.4;
+    const px = cx + Math.cos(angle) * baseR;
+    const py = cy + Math.sin(angle) * baseR;
+    const pulseR = 3.5 + b.pulseVal * (8 + tier * 1.2);
+    const lit = b.enabled || b.pulseVal > 0.01;
+
+    if (!lit) {
+      vizCtx.beginPath();
+      vizCtx.arc(px, py, 2, 0, TAU);
+      vizCtx.fillStyle = b.color;
+      vizCtx.globalAlpha = 0.18;
+      vizCtx.fill();
+      vizCtx.globalAlpha = 1;
+      continue;
+    }
+
+    if (b.pulseVal > 0.15) {
+      vizCtx.beginPath();
+      vizCtx.moveTo(cx, cy);
+      vizCtx.lineTo(px, py);
+      vizCtx.strokeStyle = b.color;
+      vizCtx.lineWidth = 0.6;
+      vizCtx.globalAlpha = Math.min(0.22, b.pulseVal * 0.18);
+      vizCtx.stroke();
+      vizCtx.globalAlpha = 1;
+    }
+
+    const glow = vizCtx.createRadialGradient(px, py, 0, px, py, pulseR + 8);
+    glow.addColorStop(0, `rgba(${b.rgb},${(0.2 + b.pulseVal * 0.45).toFixed(3)})`);
+    glow.addColorStop(1, `rgba(${b.rgb},0)`);
+    vizCtx.beginPath();
+    vizCtx.arc(px, py, pulseR + 8, 0, TAU);
+    vizCtx.fillStyle = glow;
+    vizCtx.fill();
+
+    vizCtx.beginPath();
+    vizCtx.arc(px, py, pulseR, 0, TAU);
+    vizCtx.strokeStyle = b.color;
+    vizCtx.lineWidth = 1 + b.pulseVal * 2.2;
+    vizCtx.globalAlpha = 0.55 + b.pulseVal * 0.45;
+    vizCtx.stroke();
+    vizCtx.globalAlpha = 1;
+
+    if (b.pulseVal > 0.35) {
+      vizCtx.beginPath();
+      vizCtx.arc(px, py, pulseR * 0.45, 0, TAU);
+      vizCtx.fillStyle = b.color;
+      vizCtx.globalAlpha = 0.35 + b.pulseVal * 0.4;
+      vizCtx.fill();
+      vizCtx.globalAlpha = 1;
+    }
+
+    if (n <= 36 && b.pulseVal > 0.25) {
+      vizCtx.font = '8px "Space Mono"';
+      vizCtx.fillStyle = b.color;
+      vizCtx.globalAlpha = 0.55 + b.pulseVal * 0.35;
+      vizCtx.textAlign = 'center';
+      vizCtx.fillText(b.name, px, py - pulseR - 5);
+      vizCtx.globalAlpha = 1;
+    }
+
+    if (!REDUCED && isPlaying && b.enabled && b.pulseVal > 0.6 * b.vol && Math.random() < 0.22) {
+      emitParticle(b._idx, px, py, pulseR);
+    }
+  }
+}
+
+function drawViz(dt) {
+  const cx = vizW / 2, cy = vizH / 2;
+  vizCtx.fillStyle = cachedCanvasBg;
+  vizCtx.fillRect(0, 0, vizW, vizH);
+  if (gridLayer) vizCtx.drawImage(gridLayer, 0, 0, vizW, vizH);
+
+  const layoutList = bands;
+  const useConstellation = layoutList.length >= CFG.VIZ_DENSE_BANDS;
+
+  if (useConstellation) {
+    drawVizConstellation(layoutList, cx, cy);
+  } else {
+    const vizBands = [];
+    for (let i = 0; i < bands.length; i++) {
+      if (bands[i].enabled || bands[i].pulseVal > 0.01) vizBands.push(bands[i]);
+    }
+    const drawList = vizBands.length ? vizBands : bands;
+    drawVizClassic(drawList, cx, cy);
+  }
+
   drawParticles(dt, vizCtx);
   let total = 0;
   for (let i = 0; i < bands.length; i++) total += bands[i].pulseVal;
   const avg = bands.length ? total / bands.length : 0;
   const cR = Math.max(1, 8 + avg * 18);
   const cGrad = vizCtx.createRadialGradient(cx, cy, 0, cx, cy, cR);
-  cGrad.addColorStop(0, `rgba(217,119,6,${(0.6+avg*0.4).toFixed(3)})`);
+  cGrad.addColorStop(0, `rgba(217,119,6,${(0.6 + avg * 0.4).toFixed(3)})`);
   cGrad.addColorStop(1, 'rgba(217,119,6,0)');
   vizCtx.beginPath(); vizCtx.arc(cx, cy, cR, 0, TAU);
   vizCtx.fillStyle = cGrad; vizCtx.fill();
@@ -2225,7 +2567,10 @@ function drawWaveform() {
   waveCtx.stroke();
 }
 function drawLFOMini(b) {
-  if (!b._miniDirty && !(b.enabled && isPlaying)) return;
+  if (!b.ui?.lfoCtx) return;
+  const playingAnim = b.enabled && isPlaying;
+  const interval = CFG.LFO_MINI_FRAME_INTERVAL || 4;
+  if (!b._miniDirty && !(playingAnim && (frameCount % interval === (b._idx % interval)))) return;
   b._miniDirty = false;
   const ctx = b.ui.lfoCtx, w = b.ui.lfoW, h = b.ui.lfoH;
   if (!w || !h) return;
@@ -2253,11 +2598,13 @@ function drawLFOMini(b) {
   ctx.strokeStyle=isDark?'#08080D':'#F4F3EF';ctx.lineWidth=1.5;ctx.stroke();
 }
 function formatBandPulseReadout(b) {
+  const hzLabel = b.carrier >= 1000
+    ? `${(b.carrier / 1000).toFixed(2)} kHz`
+    : `${b.carrier} Hz`;
+  if (bands.length >= CFG.VIZ_DENSE_BANDS) return hzLabel;
   if (b.source === 'smp') return 'SMP';
   if (b.source === 'white' || b.source === 'pink' || b.source === 'brown') return b.source.toUpperCase();
-  if (b.mode === 'seq') {
-    return b.carrier >= 1000 ? `${(b.carrier / 1000).toFixed(2)} kHz` : `${Math.round(b.carrier)} Hz`;
-  }
+  if (b.mode === 'seq') return hzLabel;
   const eff = getBandEffectiveParams(b);
   const mid = (eff.pLow + eff.pHigh) * 0.5;
   const pulseBpm = Math.round(mid * 60);
@@ -2298,6 +2645,13 @@ function animate(time) {
 
 playBtn.addEventListener('click', () => setPlaying(!isPlaying));
 $('master-vol').addEventListener('input', e => { const v=parseFloat(e.target.value); $('master-vol-val').textContent=Math.round(v*100)+'%'; if(masterGain)smooth(masterGain.gain,v,CFG.UI_TAU); });
+const audioOutputSel = $('audio-output-select');
+if (audioOutputSel) {
+  audioOutputSel.addEventListener('change', () => { applyAudioSink(audioOutputSel.value); });
+}
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => { refreshAudioOutputList(); });
+}
 $('btn-add-band').addEventListener('click', () => addBand());
 $('btn-conductor').addEventListener('click', () => { conductorActive=!conductorActive; $('btn-conductor').setAttribute('aria-pressed',String(conductorActive)); if(!conductorActive)$('conductor-status').textContent='idle'; logParamChange('Conductor','System','Mode',conductorActive?'Active':'Idle'); });
 $('btn-gen-preset').addEventListener('click', () => { const type=$('preset-gen-select').value; if(!type)return; applyState(generatePresetState(type)); flashBtn('btn-gen-preset'); });
@@ -2372,6 +2726,7 @@ updateFxReadouts(); updateFxLeds();
 playBtn.innerHTML = ICON_PLAY + 'START';
 updateSysUI();
 updateBandCountUI();
+refreshAudioOutputList();
 if ($('btn-expand-36')) $('btn-expand-36').addEventListener('click', () => {
   const n = expandBandsTo(CFG.ARC_STREAM_BANDS);
   if (n) flashBtn('btn-expand-36');
